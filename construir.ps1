@@ -2,7 +2,7 @@ $ErrorActionPreference='Stop'
 Set-Location $PSScriptRoot
 py -m pip install --disable-pip-version-check pyinstaller pillow
 if ($LASTEXITCODE -ne 0) {throw "No se pudieron instalar dependencias"}
-$uri="https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases/download/v0.2.0/realesrgan-ncnn-vulkan-v0.2.0-windows.zip"
+$uri="https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip"
 $zip=Join-Path $env:TEMP 'mejoraia_motor.zip'
 Invoke-WebRequest -Uri $uri -OutFile $zip
 $unpack=Join-Path $env:TEMP ('mejoraia_engine_'+[guid]::NewGuid())
