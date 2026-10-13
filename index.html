@@ -9,12 +9,12 @@
 .compare .handle{position:absolute;top:50%;left:50%;border-radius:100%;width:42px;height:42px;display:grid;place-items:center;background:white;color:#111;transform:translate(-50%,-50%);pointer-events:none;font-weight:800;box-shadow:0 3px 15px #0009}
 .compare .tag{position:absolute;top:12px;padding:6px 10px;background:#000b;border-radius:8px;font-size:13px;pointer-events:none}.tag.left{left:12px}.tag.right{right:12px}
 .compare input[type=range]{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:ew-resize;margin:0;z-index:3}
-#viewer[hidden]{display:none}#download[hidden]{display:none}#compare{max-height:70vh}#compare>img{max-height:70vh;object-fit:contain}
+#viewer[hidden],#work[hidden],#cancel[hidden]{display:none}#download[hidden]{display:none}#compare{max-height:70vh}#compare>img{max-height:70vh;object-fit:contain}
 </style><main><h1>MEJORA IA</h1><p>Ampliación local gratuita. Tus imágenes no se envían a internet.</p>
 <section><label>Cargar imagen JPG, PNG o WEBP</label><input id="file" type="file" accept="image/*">
 <div class="cols"><div><label>Ampliación</label><select id="scale"><option>2</option><option selected>4</option><option>8</option><option>16</option><option>32</option></select></div><div><label>Procesamiento</label><select id="mode"><option value="fiel">Fiel: conservar formas y colores</option><option value="ia">IA: reconstrucción de detalles</option></select></div></div>
 <label>Modelo de IA</label><select id="model"><option value="foto">Fotografía</option><option value="ilustracion">Ilustración / dibujo</option></select>
-<p><small id="status">Comprobando motor IA...</small></p><button id="go">Ampliar imagen</button><p id="message" role="status"></p></section>
+<p><small id="status">Comprobando motor IA...</small></p><button id="go">Ampliar imagen</button><button id="cancel" type="button" hidden style="margin-top:10px;background:#ac3348">Cancelar proceso</button><div id="work" hidden style="margin-top:15px"><div style="display:flex;justify-content:space-between"><strong id="stage">Iniciando</strong><span id="elapsed">0 s</span></div><progress id="bar" max="100" value="0" style="width:100%;height:22px;accent-color:#635bff"></progress><p><small id="percent">0% (avance por etapas, estimado)</small></p></div><p id="message" role="status"></p></section>
 <section id="viewer" hidden><h2>Comparar original / resultado</h2><p>Arrastrá la línea central hacia los lados para descubrir las diferencias.</p>
 <div class="compare" id="compare"><img id="after" alt="Imagen mejorada"><div class="over" id="over"><img id="before" alt="Imagen original"></div><div class="divider" id="divider"></div><div class="handle" id="handle">↔</div><span class="tag left">ORIGINAL</span><span class="tag right">RESULTADO</span><input id="curtain" type="range" min="0" max="100" value="50" aria-label="Mover cortina de comparación"></div>
 <p><a id="download" hidden download="mejora.png">Descargar PNG completo</a></p></section>
@@ -26,12 +26,30 @@ function setCurtain(v){$('over').style.clipPath='inset(0 '+(100-v)+'% 0 0)';$('d
 $('curtain').oninput=e=>setCurtain(Number(e.target.value));
 fetch('/status').then(r=>r.json()).then(v=>$('status').textContent=v.ia?'Motor IA incluido. Requiere Vulkan compatible.':'Motor IA no disponible').catch(()=>{});
 $('file').onchange=()=>{const f=$('file').files[0];if(!f)return;if(originalUrl)URL.revokeObjectURL(originalUrl);originalUrl=URL.createObjectURL(f);$('before').src=originalUrl;$('viewer').hidden=true;$('download').hidden=true;};
-$('go').onclick=async()=>{const f=$('file').files[0];if(!f){$('message').textContent='Seleccioná una imagen';return}
-$('go').disabled=true;$('message').textContent='Procesando. En ampliaciones grandes puede demorar bastante...';
-try{const r=await fetch('/process',{method:'POST',headers:{'X-Scale':$('scale').value,'X-Mode':$('mode').value,'X-Model':$('model').value},body:f});const d=await r.json();if(!r.ok)throw Error(d.error);
-const preview=d.preview||d.url;
-$('after').src=preview;$('before').src=originalUrl;$('viewer').hidden=false;
-$('download').href=d.url;$('download').hidden=false;$('curtain').value=50;setCurtain(50);
-$('message').textContent='Listo: '+d.size.join(' × ')+' píxeles. Resultado guardado en la carpeta Resultados.';
-}catch(e){$('message').textContent=e.message}finally{$('go').disabled=false}};
+let job=null,clock=null,start=0;
+function lock(v){for(const id of ['go','file','scale','mode','model'])$(id).disabled=v;$('cancel').hidden=!v;$('work').hidden=!v}
+$('cancel').onclick=async()=>{if(!job)return;$('stage').textContent='Cancelando...';$('cancel').disabled=true;try{await fetch('/cancel/'+job,{method:'POST'})}catch(e){$('message').textContent='No se pudo solicitar cancelación: '+e.message}};
+$('go').onclick=async()=>{
+ const f=$('file').files[0];if(!f){$('message').textContent='Seleccioná una imagen';return}
+ lock(true);$('cancel').disabled=false;$('viewer').hidden=true;$('stage').textContent='Enviando imagen';$('bar').value=0;$('percent').textContent='0%';$('message').textContent='';start=Date.now();
+ clock=setInterval(()=>{$('elapsed').textContent=Math.floor((Date.now()-start)/1000)+' s'},1000);
+ try{
+  let response=await fetch('/process',{method:'POST',headers:{'X-Scale':$('scale').value,'X-Mode':$('mode').value,'X-Model':$('model').value},body:f});
+  let begin=await response.json();if(!response.ok)throw Error(begin.error||'No se pudo comenzar');
+  job=begin.job;
+  while(true){
+   await new Promise(r=>setTimeout(r,1100));
+   let res=await fetch('/job/'+job);let d=await res.json();if(!res.ok)throw Error(d.error||'Sin respuesta del trabajo');
+   $('stage').textContent=d.stage||'Procesando';$('bar').value=d.pct||0;$('percent').textContent=(d.pct||0)+'% por etapas (no mide el avance dentro de cada etapa)';
+   if(d.state==='done'){
+    $('after').src=d.preview||d.url;$('before').src=originalUrl;$('viewer').hidden=false;
+    $('download').href=d.url;$('download').hidden=false;$('curtain').value=50;setCurtain(50);
+    $('message').textContent='Terminado: '+d.size.join(' × ')+' píxeles. Archivo guardado en Resultados.';
+    break;
+   }
+   if(d.state==='error'||d.state==='cancelled')throw Error(d.error||'Operación cancelada');
+  }
+ }catch(e){$('message').textContent='No se completó: '+e.message}
+ finally{clearInterval(clock);job=null;lock(false)}
+};
 </script></html>
