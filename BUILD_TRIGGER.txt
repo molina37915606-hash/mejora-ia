@@ -1,0 +1,2 @@
+Compilación automática para Windows x64 activada el 2026-10-13.
+El workflow está en .github/workflows/compilar-windows.yml.
