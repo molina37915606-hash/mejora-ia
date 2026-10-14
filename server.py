@@ -1,7 +1,7 @@
 import io, os, sys, uuid, tempfile, subprocess, threading, webbrowser, json, time, math, shutil
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageFilter, ImageEnhance
 import updater
 ROOT=Path(getattr(sys,"_MEIPASS",Path(__file__).resolve().parent))
 ENGINE=ROOT/"engine"/"realesrgan-ncnn-vulkan.exe"
@@ -14,7 +14,7 @@ def upd(j,**fields):
  with LOCK:JOBS[j].update(fields)
 def active(j):
  if JOBS[j]["cancel"]:raise InterruptedError("Proceso cancelado")
-def run_job(j,raw,scale,mode,model):
+def run_job(j,raw,scale,mode,model,intensity,priority):
  try:
   upd(j,stage="Leyendo imagen",pct=1,log=["Imagen cargada"])
   with Image.open(io.BytesIO(raw)) as incoming:
@@ -58,6 +58,13 @@ def run_job(j,raw,scale,mode,model):
       if proc.returncode!=0 or not destination.exists():
        raise RuntimeError("IA, bloque "+str(index)+": "+(stderr or stdout).decode("utf-8","replace")[-450:])
       with Image.open(destination) as result: section=result.copy()
+      if intensity!='fuerte':
+       baseline=im.crop((a,b,c,d)).resize(section.size,Image.Resampling.LANCZOS)
+       if baseline.mode!=section.mode:baseline=baseline.convert(section.mode)
+       strength=0.48 if intensity=='suave' else 0.76
+       if priority=='detalles':strength*=0.85
+       section=Image.blend(baseline,section,strength)
+      if priority=='detalles':section=section.filter(ImageFilter.UnsharpMask(radius=1.1,percent=65,threshold=3))
      # Para x2 se reduce desde x4 IA; para x8+ se escala una vez de x4,
      # sin repetir IA para inventar detalles.
      needed=((c-a)*scale,(d-b)*scale)
@@ -161,11 +168,13 @@ class Handler(BaseHTTPRequestHandler):
    scale=int(self.headers.get("X-Scale","4"))
    mode=self.headers.get("X-Mode","fiel")
    model=self.headers.get("X-Model","foto")
-   if scale not in (2,4,8,16,32) or mode not in ("fiel","ia") or model not in ("foto","ilustracion"):raise ValueError("Opciones incorrectas")
+   intensity=self.headers.get("X-Intensity","normal")
+   priority=self.headers.get("X-Priority","equilibrado")
+   if scale not in (2,4,8,16,32) or mode not in ("fiel","ia") or model not in ("foto","ilustracion") or intensity not in ("suave","normal","fuerte") or priority not in ("detalles","equilibrado","suave"):raise ValueError("Opciones incorrectas")
    raw=self.rfile.read(length)
    j=uuid.uuid4().hex
    with LOCK:JOBS[j]={"state":"running","pct":0,"stage":"Iniciando","cancel":False,"proc":None,"tiles_done":0,"tiles_total":0,"log":[],"last_activity":time.time()}
-   threading.Thread(target=run_job,args=(j,raw,scale,mode,model),daemon=True).start()
+   threading.Thread(target=run_job,args=(j,raw,scale,mode,model,intensity,priority),daemon=True).start()
    return self.reply(200,{"job":j})
   except Exception as e:return self.reply(400,{"error":str(e)})
  def log_message(self,*args):pass
