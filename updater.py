@@ -1,6 +1,6 @@
 """Actualizador de Zompix instalado. Descarga instalador firmado por release, sin duplicar ejecutables."""
 import json, os, sys, tempfile, pathlib, subprocess, urllib.request, urllib.error, shutil
-VERSION="1.4.1"
+VERSION="1.4.2"
 REPO="molina37915606-hash/mejora-ia"
 ASSET="Zompix-Setup.exe"
 API=f"https://api.github.com/repos/{REPO}/releases/latest"
@@ -34,16 +34,44 @@ def install(info,current,on_progress=None):
     if on_progress:on_progress(phase="downloading",downloaded=received,total=total,percent=round(received*100/total,1) if total else 0,message="Descargando instalador")
   if on_progress:on_progress(phase="verifying",percent=100,message="Verificando descarga")
   if target.stat().st_size!=info["bytes"]:raise ValueError("El tamaño descargado no coincide con el esperado")
-  # El instalador actualiza el mismo directorio y acceso directo sin crear otra instalación.
-  flags=getattr(subprocess,"CREATE_NO_WINDOW",0)|getattr(subprocess,"DETACHED_PROCESS",0)
+  # Auxiliar externo: espera a que ZOMPIX se cierre antes de reemplazar su EXE.
+  # Guarda el estado para poder diagnosticar errores después de reiniciar.
+  state_dir=pathlib.Path(os.environ.get("LOCALAPPDATA",str(pathlib.Path.home())))/"Zompix"
+  state_dir.mkdir(parents=True,exist_ok=True)
+  status_file=state_dir/"ultima_actualizacion.txt"
+  status_file.write_text("Instalador descargado. Esperando cierre de ZOMPIX.",encoding="utf-8")
   script=tempdir/"apply.ps1"
   setup=str(target).replace("'","''")
   application=str(expected).replace("'","''")
-  ps="$ErrorActionPreference='Stop'\nStart-Sleep -Seconds 3\n$p=Start-Process -FilePath '"+setup+"' -ArgumentList '/SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS' -Wait -PassThru\nif($p.ExitCode -eq 0){Start-Process -FilePath '"+application+"'}\n"
-  temporary=str(tempdir).replace("'","''")
-  ps += "Start-Sleep -Seconds 2\nRemove-Item -LiteralPath '"+temporary+"' -Recurse -Force -ErrorAction SilentlyContinue\n"
-  script.write_text(ps,encoding="utf-8")
-  subprocess.Popen(["powershell.exe","-NoProfile","-ExecutionPolicy","Bypass","-File",str(script)],creationflags=flags,close_fds=True)
+  report=str(status_file).replace("'","''")
+  pid=os.getpid()
+  ps="""$ErrorActionPreference='Stop'
+$report='REPORT'
+$setup='SETUP'
+$app='APPLICATION'
+try {
+ 'Esperando cierre de ZOMPIX...' | Set-Content -LiteralPath $report -Encoding UTF8
+ $deadline=(Get-Date).AddMinutes(3)
+ while (Get-Process -Id PID -ErrorAction SilentlyContinue) {
+  if ((Get-Date) -gt $deadline) { throw 'ZOMPIX no se cerró a tiempo' }
+  Start-Sleep -Seconds 1
+ }
+ 'Instalando actualización...' | Set-Content -LiteralPath $report -Encoding UTF8
+ $proc=Start-Process -FilePath $setup -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS' -PassThru -Wait
+ if ($proc.ExitCode -ne 0) { throw ('Instalador terminó con código '+$proc.ExitCode) }
+ if (-not (Test-Path -LiteralPath $app)) { throw 'No se encontró el ejecutable actualizado' }
+ 'Instalación terminada. Abriendo ZOMPIX...' | Set-Content -LiteralPath $report -Encoding UTF8
+ Start-Process -FilePath $app
+ 'Actualización finalizada. ZOMPIX reiniciado.' | Set-Content -LiteralPath $report -Encoding UTF8
+} catch {
+ ('Error al actualizar: '+$_.Exception.Message) | Set-Content -LiteralPath $report -Encoding UTF8
+}
+"""
+  ps=ps.replace("REPORT",report).replace("SETUP",setup).replace("APPLICATION",application).replace("PID",str(pid))
+  script.write_text(ps,encoding="utf-8-sig")
+  creationflags=getattr(subprocess,"CREATE_NEW_PROCESS_GROUP",0)|getattr(subprocess,"CREATE_NO_WINDOW",0)
+  subprocess.Popen(["powershell.exe","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-File",str(script)],creationflags=creationflags,close_fds=True)
+
  except:
   shutil.rmtree(tempdir,ignore_errors=True)
   raise
