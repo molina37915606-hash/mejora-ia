@@ -1,0 +1,24 @@
+name: Publicar versión Windows
+on:
+  push:
+    tags:
+      - 'v*'
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: 'x64'
+      - name: Compilar
+        shell: pwsh
+        run: ./construir.ps1
+      - name: Publicar EXE en Releases
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" "./dist/MejoraIA.exe" --title "MEJORA IA ${{ github.ref_name }}" --notes "Nueva versión de MEJORA IA para Windows x64."
