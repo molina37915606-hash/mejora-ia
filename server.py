@@ -45,6 +45,11 @@ def run_job(j,raw,scale,mode,model,intensity,priority,settings):
   if im.mode not in ("RGB","RGBA"):im=im.convert("RGBA" if "A" in im.getbands() else "RGB")
   width,height=im.size
   target=(width*scale,height*scale)
+  expected=target[0]*target[1]*len(im.getbands())
+  free=shutil.disk_usage(WORK).free
+  if expected*2>free:raise RuntimeError("No alcanza el espacio temporal disponible")
+  if expected>950000000:raise RuntimeError("Imagen demasiado grande para la RAM disponible; elegí una escala menor")
+  upd(j,stage="Verificando recursos",diagnostic={"free_gb":round(free/1e9,1),"output_mb":round(expected/1e6)})
   # Fiel prioriza forma y color. IA sólo pasa una vez por x4.
   use_ai=(mode=="ia")
   if use_ai and not ENGINE.is_file():raise RuntimeError("Motor de IA no disponible")
@@ -69,7 +74,7 @@ def run_job(j,raw,scale,mode,model,intensity,priority,settings):
      margin=12 if use_ai else 0
      a=max(0,x0-margin);b=max(0,y0-margin);c=min(width,x1+margin);d=min(height,y1+margin)
      section=im.crop((a,b,c,d))
-     upd(j,stage=f"Mejorando bloque {index}/{total}",last_activity=time.time())
+     upd(j,stage=("Iniciando GPU y motor de IA" if index==1 and use_ai else f"Mejorando bloque {index}/{total}"),last_activity=time.time(),block_started=time.time())
      if use_ai:
       source=Path(scratch)/"input.png";destination=Path(scratch)/"output.png"
       section.save(source)
@@ -109,7 +114,7 @@ def run_job(j,raw,scale,mode,model,intensity,priority,settings):
      elapsed=time.monotonic()-began
      recent=(JOBS[j].get("log") or [])[-9:]
      event=f"Bloque {index}/{total} completado"
-     upd(j,stage=event,pct=round(2+92*index/total,1),tiles_done=index,eta=round((sum(durations[-5:])/len(durations[-5:]))*(total-index)),last_activity=time.time(),log=recent+[event])
+     upd(j,stage=event,pct=round(2+92*index/total,1),tiles_done=index,eta=round((sum((durations[1:] or durations)[-5:])/len((durations[1:] or durations)[-5:]))*(total-index)),last_activity=time.time(),log=recent+[event])
    active(j)
    upd(j,stage="Preparando exportación temporal",pct=95,last_activity=time.time())
    result_path=WORK/(j+"_full.png")
@@ -214,6 +219,8 @@ class Handler(BaseHTTPRequestHandler):
    priority=self.headers.get("X-Priority","equilibrado")
    if scale not in (2,4,8,16,32) or mode not in ("fiel","ia") or model not in ("foto","ilustracion") or intensity not in ("suave","normal","fuerte") or priority not in ("detalles","equilibrado","suave"):raise ValueError("Opciones incorrectas")
    settings={"scale":scale,"mode":mode,"model":model,"intensity":intensity,"priority":priority,"name":self.headers.get("X-Filename","Imagen")[:120],"kind":self.headers.get("X-Kind","poster"),"dpi":self.headers.get("X-Dpi","150"),"sample":self.headers.get("X-Sample","false")=="true"}
+   with LOCK:
+    if any(v["state"]=="running" for v in JOBS.values()):raise ValueError("Ya se está procesando otra imagen")
    raw=self.rfile.read(length)
    j=uuid.uuid4().hex
    with LOCK:JOBS[j]={"state":"running","pct":0,"stage":"Iniciando","cancel":False,"proc":None,"tiles_done":0,"tiles_total":0,"log":[],"last_activity":time.time()}
