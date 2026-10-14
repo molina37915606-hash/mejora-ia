@@ -14,20 +14,45 @@
 <section style="padding:15px"><div class="sub" id="updateInfo">Zompix funciona sin internet. Solo se necesita conexión para actualizar.</div></section>
 </main><script>
 const el=x=>document.getElementById(x);let selected=null,originalUrl=null,w=0,h=0,job=null,readyJob=null,started=0,cropX=0,cropY=0,dragging=false;
+
+const box=el('region');
+box.style.cssText='position:absolute;border:2px solid #50dafa;background:rgba(55,145,235,.18);z-index:4;cursor:grab;touch-action:none';
+function imageRect(){return el('preview').getBoundingClientRect()}
+function placeBox(){
+ if(!w||el('preview').hidden||!originalUrl)return;
+ const im=imageRect(),view=el('viewer').getBoundingClientRect();
+ const side=Math.min(Number(el('cropSize').value),w,h);
+ cropX=Math.max(0,Math.min(w-side,cropX));cropY=Math.max(0,Math.min(h-side,cropY));
+ box.style.width=side/w*im.width+'px';box.style.height=side/h*im.height+'px';
+ box.style.left=im.left-view.left+cropX/w*im.width+'px';
+ box.style.top=im.top-view.top+cropY/h*im.height+'px'
+}
+let anchor=null;
+box.addEventListener('pointerdown',e=>{if(job)return;anchor={x:e.clientX,y:e.clientY,cx:cropX,cy:cropY};box.setPointerCapture(e.pointerId);e.preventDefault()});
+box.addEventListener('pointermove',e=>{
+ if(!anchor)return;
+ const im=imageRect();cropX=anchor.cx+(e.clientX-anchor.x)*w/im.width;cropY=anchor.cy+(e.clientY-anchor.y)*h/im.height;placeBox()
+});
+box.addEventListener('pointerup',()=>anchor=null);
+box.addEventListener('pointercancel',()=>anchor=null);
+el('cropSize').addEventListener('change',placeBox);
+window.addEventListener('resize',placeBox);
+el('kind').addEventListener('change',()=>{el('model').value=el('kind').value==='foto'?'foto':'ilustracion'});
+
 function px(n){return new Intl.NumberFormat('es-AR').format(n)}
 function size(a,b){return el('units').value==='cm'?((a*2.54/+el('dpi').value).toFixed(2)+' × '+(b*2.54/+el('dpi').value).toFixed(2)+' cm'):(px(a)+' × '+px(b)+' px')}
 function display(){if(!w)return;let scale=+el('scale').value;el('original').textContent='Original: '+size(w,h);el('target').textContent='Final: '+size(w*scale,h*scale)+' ('+px(w*scale)+' × '+px(h*scale)+' px)';let blocks=Math.ceil(w/(el('mode').value==='ia'?192:256))*Math.ceil(h/(el('mode').value==='ia'?192:256));let seconds=el('mode').value==='ia'?blocks*40:Math.max(5,w*h*scale*scale/2000000);el('estimate').textContent='Tiempo orientativo: '+(seconds>120?Math.round(seconds/60)+' min':Math.round(seconds)+' s')+' (muy variable)'}
-async function setFile(f){if(!f||job)return;selected=f;if(originalUrl)URL.revokeObjectURL(originalUrl);originalUrl=URL.createObjectURL(f);let img=new Image();img.onload=()=>{w=img.naturalWidth;h=img.naturalHeight;display()};img.src=originalUrl;el('name').textContent=f.name;el('preview').src=originalUrl;el('preview').hidden=false;el('placeholder').hidden=true;el('previewLabel').textContent='Original';el('export').hidden=true;el('discard').hidden=true;el('message').textContent=''}
+async function setFile(f){if(!f||job)return;selected=f;if(originalUrl)URL.revokeObjectURL(originalUrl);originalUrl=URL.createObjectURL(f);let img=new Image();img.onload=()=>{w=img.naturalWidth;h=img.naturalHeight;cropX=Math.max(0,(w-256)/2);cropY=Math.max(0,(h-256)/2);display();box.hidden=false;setTimeout(placeBox,50)};img.src=originalUrl;el('name').textContent=f.name;el('preview').src=originalUrl;el('preview').hidden=false;el('placeholder').hidden=true;el('previewLabel').textContent='Original';el('export').hidden=true;el('discard').hidden=true;el('message').textContent=''}
 el('file').onchange=()=>setFile(el('file').files[0]);
 el('drop').ondragover=e=>e.preventDefault();el('drop').ondrop=e=>{e.preventDefault();setFile(e.dataTransfer.files[0])};
 document.addEventListener('paste',e=>{let item=[...(e.clipboardData?.items||[])].find(x=>x.type.startsWith('image/'));if(item){e.preventDefault();setFile(item.getAsFile())}});
 ['scale','mode','units','dpi'].forEach(id=>el(id).onchange=display);
 function lock(b){['file','scale','mode','model','units','dpi','start','sample'].forEach(id=>el(id).disabled=b);el('progressBox').hidden=!b}
 async function process(sample=false){if(!selected||job)return alert('Cargá una imagen');let f=selected;
-if(sample){let image=new Image();image.src=originalUrl;await image.decode();let crop=Math.min(320,image.naturalWidth,image.naturalHeight);let canvas=document.createElement('canvas');canvas.width=crop;canvas.height=crop;canvas.getContext('2d').drawImage(image,Math.floor((image.width-crop)/2),Math.floor((image.height-crop)/2),crop,crop,0,0,crop,crop);f=await new Promise(r=>canvas.toBlob(b=>r(new File([b],'prueba.png',{type:'image/png'}))));}
+if(sample){let image=new Image();image.src=originalUrl;await image.decode();let crop=Math.min(Number(el('cropSize').value),image.naturalWidth,image.naturalHeight);let canvas=document.createElement('canvas');canvas.width=crop;canvas.height=crop;canvas.getContext('2d').drawImage(image,Math.round(cropX),Math.round(cropY),crop,crop,0,0,crop,crop);f=await new Promise(r=>canvas.toBlob(b=>r(new File([b],'prueba.png',{type:'image/png'}))));}
 if(readyJob){await fetch('/discard/'+readyJob,{method:'POST'}).catch(()=>{});readyJob=null}
-lock(true);el('export').hidden=true;el('discard').hidden=true;started=Date.now();el('stage').textContent='Enviando imagen...';el('message').textContent='';el('previewLabel').textContent=sample?'Prueba de zona central':'Procesamiento completo';
-try{let res=await fetch('/process',{method:'POST',body:f,headers:{'X-Scale':el('scale').value,'X-Mode':el('mode').value,'X-Model':el('model').value}});let d=await res.json();if(!res.ok)throw Error(d.error);job=d.job;let rev=0;
+lock(true);el('export').hidden=true;el('discard').hidden=true;started=Date.now();el('stage').textContent='Enviando imagen...';el('message').textContent='';el('previewLabel').textContent=sample?'Prueba de zona':'Procesamiento completo';box.hidden=true;
+try{let res=await fetch('/process',{method:'POST',body:f,headers:{'X-Scale':el('scale').value,'X-Mode':el('mode').value,'X-Model':el('model').value,'X-Intensity':el('intensity').value,'X-Priority':el('priority').value}});let d=await res.json();if(!res.ok)throw Error(d.error);job=d.job;let rev=0;
 while(true){await new Promise(r=>setTimeout(r,1400));let r=await fetch('/job/'+job);let d=await r.json();if(!r.ok)throw Error(d.error);
 el('stage').textContent=d.stage||'Procesando';el('progress').value=d.pct||0;el('pct').textContent=(d.pct||0)+'% · '+(d.tiles_done||0)+'/'+(d.tiles_total||'?')+' bloques';
 el('timing').textContent='Transcurrido: '+Math.floor((Date.now()-started)/1000)+' s'+(d.eta!=null?' · Restante aprox.: '+d.eta+' s':'');
@@ -41,7 +66,7 @@ finally{job=null;lock(false)}}
 el('start').onclick=()=>process(false);el('sample').onclick=()=>process(true);
 el('cancel').onclick=()=>{if(job)fetch('/cancel/'+job,{method:'POST'}).catch(()=>{})};
 el('export').onclick=()=>{if(readyJob){let a=document.createElement('a');a.href='/export/'+readyJob;a.download='Zompix.png';document.body.append(a);a.click();a.remove()}};
-el('discard').onclick=async()=>{if(readyJob)await fetch('/discard/'+readyJob,{method:'POST'});readyJob=null;el('export').hidden=true;el('discard').hidden=true;el('preview').src=originalUrl;el('previewLabel').textContent='Original'};
+el('discard').onclick=async()=>{if(readyJob)await fetch('/discard/'+readyJob,{method:'POST'});readyJob=null;el('export').hidden=true;el('discard').hidden=true;el('preview').src=originalUrl;el('previewLabel').textContent='Original';box.hidden=false;setTimeout(placeBox,80)};
 async function checkUpdates(){try{let r=await fetch('/update/check'),d=await r.json();el('update').hidden=!d.available;el('updateInfo').textContent=d.available?'Versión '+d.latest+' disponible':d.message||'No hay nuevas versiones'}catch(e){el('updateInfo').textContent='Actualizaciones no disponibles'}}
 el('check').onclick=checkUpdates;el('update').onclick=async()=>{el('updateInfo').textContent='Descargando actualización...';let r=await fetch('/update/install',{method:'POST'});let d=await r.json();if(!r.ok)el('updateInfo').textContent=d.error};
 checkUpdates();
