@@ -13,6 +13,8 @@ if (Test-Path engine){Remove-Item engine -Recurse -Force}
 New-Item engine -ItemType Directory | Out-Null
 Copy-Item (Join-Path $exe.Directory.FullName '*') engine -Recurse -Force
 if (-not (Test-Path engine/models)){throw "El paquete no contiene modelos de IA"}
-py -m PyInstaller --noconfirm --clean --onefile --windowed --name MejoraIA --add-data "index.html;." --add-data "engine;engine" server.py
+py generar_icono.py
+if ($LASTEXITCODE -ne 0){throw "No se pudo crear el icono"}
+py -m PyInstaller --noconfirm --clean --onefile --windowed --name MejoraIA --icon "zompix.ico" --add-data "index.html;." --add-data "brand.svg;." --add-data "engine;engine" server.py
 if ($LASTEXITCODE -ne 0){throw "Falló compilación"}
 Write-Host "EXE preparado: dist/MejoraIA.exe"
