@@ -1,4 +1,4 @@
-name: Compilar EXE Windows
+name: Compilar instalador Zompix Windows
 on:
   workflow_dispatch:
   push:
@@ -14,22 +14,30 @@ jobs:
         with:
           python-version: '3.12'
           architecture: 'x64'
-      - name: Crear EXE e incluir IA
+      - name: Compilar Zompix
         shell: pwsh
         run: ./construir.ps1
-      - name: Publicar EXE como artifact
+      - name: Instalar Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+      - name: Crear instalador
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" zompix.iss
+          if ($LASTEXITCODE -ne 0) {throw "No se pudo crear el instalador"}
+      - name: Guardar instalador
         uses: actions/upload-artifact@v4
         with:
-          name: MejoraIA-Windows-x64
-          path: dist/MejoraIA.exe
+          name: Zompix-Setup-Windows
+          path: dist/Zompix-Setup.exe
           if-no-files-found: error
-      - name: Publicar versión inicial v6.1.0
+      - name: Publicar v1.0.0
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v6.1.0 *> $null
+          gh release view v1.0.0 *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create v6.1.0 "./dist/MejoraIA.exe" --title "ZOMPIX v6.1.0" --notes "Recuadro móvil de prueba x1-x4, perfiles de imagen e intensidad de IA." --target "${{ github.sha }}"
-            if ($LASTEXITCODE -ne 0) { throw "No se pudo publicar v6.1.0" }
+            gh release create v1.0.0 "./dist/Zompix-Setup.exe" --title "ZOMPIX v1.0.0" --notes "Primera instalación estable de Zompix con actualizaciones automáticas." --target "${{ github.sha }}"
+            if ($LASTEXITCODE -ne 0) {throw "No se pudo publicar v1.0.0"}
           }
