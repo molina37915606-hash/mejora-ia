@@ -31,6 +31,10 @@ def record(j,settings):
      thumb.convert("RGB").save(HISTORY_DIR/(j+".jpg"),quality=75,optimize=True)
    rows=get_history();rows.insert(0,row);save_history(rows)
  except Exception:pass
+UPDATE_STATE={"phase":"idle","percent":0,"downloaded":0,"total":0,"message":""}
+UPDATE_LOCK=threading.RLock()
+def update_progress(**fields):
+ with UPDATE_LOCK:UPDATE_STATE.update(fields)
 JOBS={}
 LOCK=threading.RLock()
 def upd(j,**fields):
@@ -168,6 +172,8 @@ class Handler(BaseHTTPRequestHandler):
    p=HISTORY_DIR/(key+".jpg")
    return self.reply(200,p.read_bytes(),"image/jpeg") if p.is_file() else self.reply(404,{"error":"Sin vista previa"})
   if self.path=="/status":return self.reply(200,{"version":updater.VERSION,"ia":ENGINE.exists(),"name":"Zompix"})
+  if self.path=="/update/progress":
+   with UPDATE_LOCK:return self.reply(200,dict(UPDATE_STATE))
   if self.path=="/update/check":
    try:return self.reply(200,updater.check())
    except Exception as e:return self.reply(200,{"available":False,"message":str(e)})
@@ -209,10 +215,19 @@ class Handler(BaseHTTPRequestHandler):
    if self.path=="/update/install":
     with LOCK:
      if any(i["state"]=="running" for i in JOBS.values()):raise ValueError("Terminá el procesamiento antes de actualizar")
-    info=updater.check()
-    if not info.get("available"):raise ValueError(info.get("message","No hay actualización"))
-    updater.install(info,sys.executable)
-    self.reply(200,{"ok":True});threading.Timer(1.5,lambda:os._exit(0)).start();return
+    with UPDATE_LOCK:
+     if UPDATE_STATE["phase"] in ("downloading","verifying","installing"):raise ValueError("Actualización ya iniciada")
+     UPDATE_STATE.update(phase="downloading",percent=0,downloaded=0,total=0,message="Buscando actualización")
+    def background_update():
+     try:
+      info=updater.check()
+      if not info.get("available"):raise ValueError(info.get("message","No hay actualización"))
+      updater.install(info,sys.executable,on_progress=update_progress)
+      update_progress(phase="installing",percent=100,message="Descarga completa. Se abrirá el instalador de Windows.")
+      threading.Timer(3,lambda:os._exit(0)).start()
+     except Exception as error:update_progress(phase="error",message=str(error))
+    threading.Thread(target=background_update,daemon=True).start()
+    return self.reply(200,{"ok":True})
    if self.path.startswith("/cancel/"):
     j=self.path.rsplit("/",1)[-1]
     with LOCK:
