@@ -181,6 +181,9 @@ class Handler(BaseHTTPRequestHandler):
    p=HISTORY_DIR/(key+".jpg")
    return self.reply(200,p.read_bytes(),"image/jpeg") if p.is_file() else self.reply(404,{"error":"Sin vista previa"})
   if self.path=="/status":return self.reply(200,{"version":updater.VERSION,"ia":ENGINE.exists(),"name":"Zompix"})
+  if self.path=="/update/last":
+   log=HISTORY_DIR.parent/"ultima_actualizacion.txt"
+   return self.reply(200,{"message":log.read_text(encoding="utf-8-sig") if log.is_file() else ""})
   if self.path=="/update/progress":
    with UPDATE_LOCK:return self.reply(200,dict(UPDATE_STATE))
   if self.path=="/update/check":
