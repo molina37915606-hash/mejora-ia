@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
 permissions:
-  contents: read
+  contents: write
 jobs:
   build:
     runs-on: windows-latest
@@ -17,9 +17,19 @@ jobs:
       - name: Crear EXE e incluir IA
         shell: pwsh
         run: ./construir.ps1
-      - name: Publicar EXE
+      - name: Publicar EXE como artifact
         uses: actions/upload-artifact@v4
         with:
           name: MejoraIA-Windows-x64
           path: dist/MejoraIA.exe
           if-no-files-found: error
+      - name: Publicar versión inicial v5.0.0
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view v5.0.0 *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create v5.0.0 "./dist/MejoraIA.exe" --title "MEJORA IA v5.0.0" --notes "Primera versión con comprobación de actualizaciones, progreso por bloques y comparador de cortina." --target "${{ github.sha }}"
+            if ($LASTEXITCODE -ne 0) { throw "No se pudo publicar v5.0.0" }
+          }
