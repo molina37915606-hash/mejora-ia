@@ -10,8 +10,11 @@
 .compare .tag{position:absolute;top:12px;padding:6px 10px;background:#000b;border-radius:8px;font-size:13px;pointer-events:none}.tag.left{left:12px}.tag.right{right:12px}
 .compare input[type=range]{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:ew-resize;margin:0;z-index:3}
 #viewer[hidden],#work[hidden],#cancel[hidden],#partialbox[hidden],#installUpdate[hidden]{display:none}#download[hidden]{display:none}#compare{max-height:70vh}#compare>img{max-height:70vh;object-fit:contain}
-</style><main><h1>MEJORA IA <small>v5.0</small></h1><section id="updates"><strong>Actualizaciones</strong><p id="updateInfo">Buscando actualizaciones...</p><button id="checkUpdate" type="button" style="max-width:250px">Buscar actualización</button><button id="installUpdate" type="button" hidden style="max-width:250px;background:#26947a;margin-left:8px">Instalar y reiniciar</button></section><p>Ampliación local gratuita. Tus imágenes no se envían a internet.</p>
-<section><label>Cargar imagen JPG, PNG o WEBP</label><input id="file" type="file" accept="image/*">
+</style><main><h1>MEJORA IA <small>v5.1</small></h1><section id="updates"><strong>Actualizaciones</strong><p id="updateInfo">Buscando actualizaciones...</p><button id="checkUpdate" type="button" style="max-width:250px">Buscar actualización</button><button id="installUpdate" type="button" hidden style="max-width:250px;background:#26947a;margin-left:8px">Instalar y reiniciar</button></section><p>Ampliación local gratuita. Tus imágenes no se envían a internet.</p>
+<section><label>Cargar imagen JPG, PNG o WEBP</label><input id="file" type="file" accept="image/*"><p><button id="pasteButton" type="button" style="background:#303b57">Pegar imagen del portapapeles</button><small> También podés presionar Ctrl+V en esta ventana.</small></p><p id="sourceName" style="color:#aabbd3"></p>
+<div class="cols"><div><label>Unidad de medidas</label><select id="units"><option value="px">Píxeles (px)</option><option value="cm">Centímetros (cm)</option></select></div><div><label>Resolución para centímetros (PPP/DPI)</label><select id="dpi"><option value="72">72 DPI</option><option value="150" selected>150 DPI</option><option value="300">300 DPI</option></select></div></div>
+<div class="cols" id="measure" style="margin-top:12px"><div><strong>Imagen original</strong><p id="originalSize">Cargá o pegá una imagen</p></div><div><strong>Después de ampliar</strong><p id="targetSize">Todavía sin datos</p></div></div>
+<p id="estimate" style="color:#bac8dc">Tiempo estimado: cargá una imagen.</p><small>Los centímetros representan el tamaño de impresión para el DPI elegido. No cambian la cantidad de píxeles. El tiempo es una aproximación inicial, no una promesa.</small>
 <div class="cols"><div><label>Ampliación</label><select id="scale"><option>2</option><option selected>4</option><option>8</option><option>16</option><option>32</option></select></div><div><label>Procesamiento</label><select id="mode"><option value="fiel">Fiel: conservar formas y colores</option><option value="ia">IA: reconstrucción de detalles</option></select></div></div>
 <label>Modelo de IA</label><select id="model"><option value="foto">Fotografía</option><option value="ilustracion">Ilustración / dibujo</option></select>
 <p><small id="status">Comprobando motor IA...</small></p><button id="go">Ampliar imagen</button><button id="cancel" type="button" hidden style="margin-top:10px;background:#ac3348">Cancelar proceso</button><div id="work" hidden style="margin-top:15px"><div style="display:flex;justify-content:space-between"><strong id="stage">Iniciando</strong><span id="elapsed">0 s</span></div><progress id="bar" max="100" value="0" style="width:100%;height:22px;accent-color:#635bff"></progress><p><small id="percent">Preparando bloques...</small></p><p id="health" style="color:#b8c8e9"></p><div id="partialbox" hidden><h3>Vista previa progresiva</h3><img id="partialimg" style="max-width:100%;max-height:420px;border-radius:12px" alt="Vista parcial de los bloques completados"></div><p id="eta"></p><details><summary>Registro de actividad</summary><pre id="log" style="white-space:pre-wrap;font-size:12px"></pre></details></div><p id="message" role="status"></p></section>
@@ -21,16 +24,48 @@
 <small>Sin límite fijo de píxeles. Las imágenes grandes requieren mucho almacenamiento, memoria y tiempo; puede producirse un error si el hardware no alcanza. La IA puede alterar detalles finos. En modo fiel no se recupera información perdida.</small>
 </main><script>
 const $=id=>document.getElementById(id);
-let originalUrl;
+let originalUrl,selectedFile=null,imageWidth=0,imageHeight=0;
 function setCurtain(v){$('over').style.clipPath='inset(0 '+(100-v)+'% 0 0)';$('divider').style.left=v+'%';$('handle').style.left=v+'%'}
 $('curtain').oninput=e=>setCurtain(Number(e.target.value));
 fetch('/status').then(r=>r.json()).then(v=>$('status').textContent=v.ia?'Motor IA incluido. Requiere Vulkan compatible.':'Motor IA no disponible').catch(()=>{});
-$('file').onchange=()=>{const f=$('file').files[0];if(!f)return;if(originalUrl)URL.revokeObjectURL(originalUrl);originalUrl=URL.createObjectURL(f);$('before').src=originalUrl;$('viewer').hidden=true;$('download').hidden=true;};
+const formatNumber=n=>new Intl.NumberFormat('es-AR',{maximumFractionDigits:0}).format(n);
+function dimensions(w,h){if($('units').value==='cm'){const d=Number($('dpi').value);return (w*2.54/d).toFixed(2)+' × '+(h*2.54/d).toFixed(2)+' cm'}return formatNumber(w)+' × '+formatNumber(h)+' px'}
+function updateMeasures(){
+ if(!imageWidth)return;
+ const sc=Number($('scale').value);
+ $('originalSize').textContent=dimensions(imageWidth,imageHeight);
+ $('targetSize').textContent=dimensions(imageWidth*sc,imageHeight*sc)+' ('+formatNumber(imageWidth*sc)+' × '+formatNumber(imageHeight*sc)+' px)';
+ const blocks=Math.ceil(imageWidth/256)*Math.ceil(imageHeight/256);
+ const ai=$('mode').value==='ia',steps=sc<=4?1:sc<=16?2:3;
+ const roughSeconds=ai?blocks*steps*35:Math.max(5,imageWidth*imageHeight*sc*sc/2000000);
+ $('estimate').textContent='Tiempo orientativo: '+(roughSeconds<120?'aprox. '+Math.ceil(roughSeconds/10)*10+' segundos':'aprox. '+Math.ceil(roughSeconds/60)+' minutos')+(ai?' (IA, estimación muy variable según la GPU y cada bloque)':' (modo fiel; depende de la memoria)');
+}
+async function acceptFile(f){
+ if(!f)return;
+ selectedFile=f;
+ if(originalUrl)URL.revokeObjectURL(originalUrl);
+ originalUrl=URL.createObjectURL(f);
+ $('before').src=originalUrl;
+ $('viewer').hidden=true;$('download').hidden=true;
+ $('sourceName').textContent='Imagen: '+f.name;
+ const image=new Image();
+ image.onload=()=>{imageWidth=image.naturalWidth;imageHeight=image.naturalHeight;updateMeasures()};
+ image.onerror=()=>{$('message').textContent='El archivo no es una imagen válida'};
+ image.src=originalUrl;
+}
+$('file').onchange=()=>acceptFile($('file').files[0]);
+async function clipboard(){
+ try{const parts=await navigator.clipboard.read();for(const part of parts){const mime=part.types.find(t=>t.startsWith('image/'));if(mime){const blob=await part.getType(mime);acceptFile(new File([blob],'imagen_pegada.png',{type:mime}));return}}$('message').textContent='El portapapeles no contiene una imagen.'}
+ catch(e){$('message').textContent='No se pudo leer el portapapeles. Probá Ctrl+V o Seleccionar archivo.'}
+}
+$('pasteButton').onclick=clipboard;
+document.addEventListener('paste',e=>{if(job)return;const item=[...(e.clipboardData?.items||[])].find(x=>x.type.startsWith('image/'));if(item){e.preventDefault();acceptFile(item.getAsFile())}});
+for(const id of ['scale','mode','model','units','dpi'])$(id).addEventListener('change',updateMeasures);
 let job=null,clock=null,start=0,lastRev=0;
-function lock(v){for(const id of ['go','file','scale','mode','model'])$(id).disabled=v;$('cancel').hidden=!v;$('work').hidden=!v}
+function lock(v){for(const id of ['go','file','pasteButton','scale','mode','model','units','dpi'])$(id).disabled=v;$('cancel').hidden=!v;$('work').hidden=!v}
 $('cancel').onclick=async()=>{if(!job)return;$('stage').textContent='Cancelando...';$('cancel').disabled=true;try{await fetch('/cancel/'+job,{method:'POST'})}catch(e){$('message').textContent='No se pudo solicitar cancelación: '+e.message}};
 $('go').onclick=async()=>{
- const f=$('file').files[0];if(!f){$('message').textContent='Seleccioná una imagen';return}
+ const f=selectedFile;if(!f){$('message').textContent='Seleccioná una imagen';return}
  lock(true);lastRev=0;$('partialbox').hidden=true;$('log').textContent='';$('eta').textContent='';$('cancel').disabled=false;$('viewer').hidden=true;$('stage').textContent='Enviando imagen';$('bar').value=0;$('percent').textContent='0%';$('message').textContent='';start=Date.now();
  clock=setInterval(()=>{$('elapsed').textContent=Math.floor((Date.now()-start)/1000)+' s'},1000);
  try{
