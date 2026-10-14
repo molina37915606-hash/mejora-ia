@@ -66,6 +66,9 @@ def run_job(j,raw,scale,mode,model,intensity,priority,settings):
   began=time.monotonic()
   durations=[]
   with tempfile.TemporaryDirectory(prefix="zompix_tiles_") as scratch:
+   input_dir=Path(scratch)/"batch_in";output_dir=Path(scratch)/"batch_out"
+   if use_ai:input_dir.mkdir();output_dir.mkdir()
+   batch_size=4 if performance=="low" else 12 if performance=="fast" else 8
    for y in range(rows):
     for x in range(cols):
      active(j)
@@ -77,23 +80,33 @@ def run_job(j,raw,scale,mode,model,intensity,priority,settings):
      section=im.crop((a,b,c,d))
      upd(j,stage=("Iniciando GPU y motor de IA" if index==1 and use_ai else f"Mejorando bloque {index}/{total}"),last_activity=time.time(),block_started=time.time())
      if use_ai:
-      source=Path(scratch)/"input.png";destination=Path(scratch)/"output.png"
-      section.save(source)
-      cmd=[str(ENGINE),"-i",str(source),"-o",str(destination),"-n",modelname,"-m",str(MODELS),"-s","4","-t","32","-f","png"]
-      proc=subprocess.Popen(cmd,cwd=str(ENGINE.parent),stdout=subprocess.PIPE,stderr=subprocess.PIPE,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
-      upd(j,proc=proc)
-      while True:
-       try:
-        stdout,stderr=proc.communicate(timeout=8)
-        break
-       except subprocess.TimeoutExpired:
+      if (index-1)%batch_size==0:
+       for old in input_dir.glob("*.png"):old.unlink()
+       for old in output_dir.glob("*.png"):old.unlink()
+       stop=min(total,index+batch_size-1)
+       for number in range(index,stop+1):
         active(j)
-        upd(j,stage=f"IA activa: bloque {index}/{total}, {int(time.time()-JOBS[j]['block_started'])} s",last_activity=time.time())
-      upd(j,proc=None)
-      active(j)
-      if proc.returncode!=0 or not destination.exists():
-       raise RuntimeError("IA, bloque "+str(index)+": "+(stderr or stdout).decode("utf-8","replace")[-450:])
-      with Image.open(destination) as result: section=result.copy()
+        z=number-1;yy=z//cols;xx=z%cols
+        xx0=xx*tile;yy0=yy*tile
+        xx1=min(width,xx0+tile);yy1=min(height,yy0+tile)
+        aa=max(0,xx0-12);bb=max(0,yy0-12)
+        cc=min(width,xx1+12);dd=min(height,yy1+12)
+        im.crop((aa,bb,cc,dd)).save(input_dir/(f"{number:06d}.png"))
+       cmd=[str(ENGINE),"-i",str(input_dir),"-o",str(output_dir),"-n",modelname,"-m",str(MODELS),"-s","4","-t","32","-f","png"]
+       proc=subprocess.Popen(cmd,cwd=str(ENGINE.parent),stdout=subprocess.PIPE,stderr=subprocess.PIPE,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+       upd(j,proc=proc,stage=f"IA procesando lote {index}-{stop}/{total}",block_started=time.time())
+       while True:
+        try:
+         stdout,stderr=proc.communicate(timeout=8)
+         break
+        except subprocess.TimeoutExpired:
+         active(j)
+         upd(j,stage=f"IA activa: lote {index}-{stop}/{total}",last_activity=time.time())
+       upd(j,proc=None)
+       active(j)
+       if proc.returncode!=0:raise RuntimeError((stderr or stdout).decode("utf-8","replace")[-450:])
+       if any(not (output_dir/(f"{n:06d}.png")).exists() for n in range(index,stop+1)):raise RuntimeError("No se generaron todos los mosaicos del lote")
+      with Image.open(output_dir/(f"{index:06d}.png")) as result:section=result.copy()
       if intensity!='fuerte':
        baseline=im.crop((a,b,c,d)).resize(section.size,Image.Resampling.LANCZOS)
        if baseline.mode!=section.mode:baseline=baseline.convert(section.mode)
