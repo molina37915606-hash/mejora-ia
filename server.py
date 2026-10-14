@@ -53,7 +53,8 @@ def run_job(j,raw,scale,mode,model,intensity,priority,settings):
   # Fiel prioriza forma y color. IA sólo pasa una vez por x4.
   use_ai=(mode=="ia")
   if use_ai and not ENGINE.is_file():raise RuntimeError("Motor de IA no disponible")
-  tile=192 if use_ai else 256
+  performance=settings.get('performance','auto')
+  tile=(160 if performance=='low' else 256 if performance=='fast' else 192) if use_ai else 256
   cols=math.ceil(width/tile);rows=math.ceil(height/tile)
   total=cols*rows
   upd(j,tiles_total=total,tiles_done=0,size=list(target),stage="Preparando bloques",pct=2)
@@ -224,7 +225,7 @@ class Handler(BaseHTTPRequestHandler):
    intensity=self.headers.get("X-Intensity","normal")
    priority=self.headers.get("X-Priority","equilibrado")
    if scale not in (2,4,8,16,32) or mode not in ("fiel","ia") or model not in ("foto","ilustracion") or intensity not in ("suave","normal","fuerte") or priority not in ("detalles","equilibrado","suave"):raise ValueError("Opciones incorrectas")
-   settings={"scale":scale,"mode":mode,"model":model,"intensity":intensity,"priority":priority,"name":self.headers.get("X-Filename","Imagen")[:120],"kind":self.headers.get("X-Kind","poster"),"dpi":self.headers.get("X-Dpi","150"),"sample":self.headers.get("X-Sample","false")=="true"}
+   settings={"performance":self.headers.get("X-Performance","auto"),"scale":scale,"mode":mode,"model":model,"intensity":intensity,"priority":priority,"name":self.headers.get("X-Filename","Imagen")[:120],"kind":self.headers.get("X-Kind","poster"),"dpi":self.headers.get("X-Dpi","150"),"sample":self.headers.get("X-Sample","false")=="true"}
    with LOCK:
     if any(v["state"]=="running" for v in JOBS.values()):raise ValueError("Ya se está procesando otra imagen")
    raw=self.rfile.read(length)
