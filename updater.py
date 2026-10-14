@@ -1,6 +1,6 @@
 """Actualizador de Zompix instalado. Descarga instalador firmado por release, sin duplicar ejecutables."""
 import json, os, sys, tempfile, pathlib, subprocess, urllib.request, urllib.error, shutil
-VERSION="1.4.0"
+VERSION="1.4.1"
 REPO="molina37915606-hash/mejora-ia"
 ASSET="Zompix-Setup.exe"
 API=f"https://api.github.com/repos/{REPO}/releases/latest"
