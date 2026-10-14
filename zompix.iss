@@ -1,5 +1,5 @@
 #define AppName "Zompix"
-#define AppVersion "1.2.0"
+#define AppVersion "1.3.0"
 [Setup]
 AppId={{A8C59E68-5F01-4CBF-8C76-0E104548623D}
 AppName={#AppName}
