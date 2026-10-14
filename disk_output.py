@@ -21,12 +21,12 @@ class DiskImage:
    fp.write(struct.pack(">I",len(data)));fp.write(kind);fp.write(data)
    fp.write(struct.pack(">I",zlib.crc32(kind+data)&0xffffffff))
   with open(path,"wb") as fp:
-   fp.write(b"\\x89PNG\\r\\n\\x1a\\n")
+   fp.write(b"\x89PNG\r\n\x1a\n")
    chunk(fp,b"IHDR",struct.pack(">IIBBBBB",self.width,self.height,8,2 if self.channels==3 else 6,0,0,0))
    compress=zlib.compressobj(4);pending=bytearray()
    for row in range(self.height):
     start=row*self.stride
-    pending.extend(compress.compress(b"\\x00"+self.mm[start:start+self.stride]))
+    pending.extend(compress.compress(b"\x00"+self.mm[start:start+self.stride]))
     while len(pending)>1048576:
      chunk(fp,b"IDAT",bytes(pending[:1048576]))
      del pending[:1048576]
