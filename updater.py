@@ -1,6 +1,6 @@
 """Actualizador de Zompix instalado. Descarga instalador firmado por release, sin duplicar ejecutables."""
 import json, os, sys, tempfile, pathlib, subprocess, urllib.request, urllib.error, shutil
-VERSION="1.3.0"
+VERSION="1.4.0"
 REPO="molina37915606-hash/mejora-ia"
 ASSET="Zompix-Setup.exe"
 API=f"https://api.github.com/repos/{REPO}/releases/latest"
@@ -13,7 +13,7 @@ def check():
  asset=next((a for a in release.get("assets",[]) if a.get("name")==ASSET),None)
  if not asset or not latest:return {"available":False,"version":VERSION,"message":"No hay un instalador público disponible."}
  return {"available":version_key(latest)>version_key(VERSION),"version":VERSION,"latest":latest,"url":asset["browser_download_url"],"bytes":asset["size"],"notes":(release.get("body") or "")[:1000]}
-def install(info,current):
+def install(info,current,on_progress=None):
  if not info.get("available"):raise ValueError("No hay versión más reciente")
  current=pathlib.Path(current).resolve()
  expected=pathlib.Path(os.environ.get("LOCALAPPDATA",str(pathlib.Path.home())))/"Programs"/"Zompix"/"Zompix.exe"
@@ -24,15 +24,22 @@ def install(info,current):
  target=tempdir/ASSET
  request=urllib.request.Request(url,headers={"User-Agent":"Zompix-Updater/1"})
  try:
+  total=int(info.get("bytes") or 0)
+  received=0
   with urllib.request.urlopen(request,timeout=300) as source,target.open("wb") as destination:
-   shutil.copyfileobj(source,destination,1024*1024)
+   while True:
+    block=source.read(256*1024)
+    if not block:break
+    destination.write(block);received+=len(block)
+    if on_progress:on_progress(phase="downloading",downloaded=received,total=total,percent=round(received*100/total,1) if total else 0,message="Descargando instalador")
+  if on_progress:on_progress(phase="verifying",percent=100,message="Verificando descarga")
   if target.stat().st_size!=info["bytes"]:raise ValueError("El tamaño descargado no coincide con el esperado")
   # El instalador actualiza el mismo directorio y acceso directo sin crear otra instalación.
   flags=getattr(subprocess,"CREATE_NO_WINDOW",0)|getattr(subprocess,"DETACHED_PROCESS",0)
   script=tempdir/"apply.ps1"
   setup=str(target).replace("'","''")
   application=str(expected).replace("'","''")
-  ps="$ErrorActionPreference='Stop'\nStart-Sleep -Seconds 3\n$p=Start-Process -FilePath '"+setup+"' -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS' -Wait -PassThru\nif($p.ExitCode -eq 0){Start-Process -FilePath '"+application+"'}\n"
+  ps="$ErrorActionPreference='Stop'\nStart-Sleep -Seconds 3\n$p=Start-Process -FilePath '"+setup+"' -ArgumentList '/SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS' -Wait -PassThru\nif($p.ExitCode -eq 0){Start-Process -FilePath '"+application+"'}\n"
   temporary=str(tempdir).replace("'","''")
   ps += "Start-Sleep -Seconds 2\nRemove-Item -LiteralPath '"+temporary+"' -Recurse -Force -ErrorAction SilentlyContinue\n"
   script.write_text(ps,encoding="utf-8")
