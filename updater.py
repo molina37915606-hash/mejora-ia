@@ -33,6 +33,8 @@ def install(info,current):
   setup=str(target).replace("'","''")
   application=str(expected).replace("'","''")
   ps="$ErrorActionPreference='Stop'\nStart-Sleep -Seconds 3\n$p=Start-Process -FilePath '"+setup+"' -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS' -Wait -PassThru\nif($p.ExitCode -eq 0){Start-Process -FilePath '"+application+"'}\n"
+  temporary=str(tempdir).replace("'","''")
+  ps += "Start-Sleep -Seconds 2\nRemove-Item -LiteralPath '"+temporary+"' -Recurse -Force -ErrorAction SilentlyContinue\n"
   script.write_text(ps,encoding="utf-8")
   subprocess.Popen(["powershell.exe","-NoProfile","-ExecutionPolicy","Bypass","-File",str(script)],creationflags=flags,close_fds=True)
  except:
