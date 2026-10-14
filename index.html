@@ -90,7 +90,7 @@ el('update').onclick=async()=>{
    const mb=n=>(n/1048576).toFixed(1);
    el('updateBytes').textContent=status.total?mb(status.downloaded)+' de '+mb(status.total)+' MB · '+Math.round(status.percent||0)+'%':'Conectando...';
    if(status.phase==='error')throw Error(status.message);
-   if(status.phase==='installing'){el('updateBytes').textContent='Descarga completa. Continuá en la ventana del instalador.';break}
+   if(status.phase==='installing'){el('updateBytes').textContent='Descarga completa. ZOMPIX se cerrará, instalará la versión nueva y volverá a abrirse.';break}
   }
  }catch(error){el('updateStage').textContent='Error: '+error.message;el('update').disabled=false}
 };
@@ -159,4 +159,5 @@ async function refreshHistory(){
 el('refreshHistory').onclick=refreshHistory;
 el('clearHistory').onclick=async()=>{if(confirm('¿Borrar todo el historial y sus miniaturas?')){await fetch('/history/delete/all',{method:'POST'});refreshHistory()}};
 checkUpdates();refreshHistory();
+fetch('/update/last').then(r=>r.json()).then(d=>{if(d.message)el('updateInfo').textContent=d.message}).catch(()=>{});
 </script></body></html>
