@@ -2,6 +2,7 @@ import io, os, sys, uuid, tempfile, subprocess, threading, webbrowser, json
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from PIL import Image, ImageOps
+import updater
 ROOT=Path(getattr(sys,"_MEIPASS",Path(__file__).resolve().parent))
 BASE=Path(os.environ.get("LOCALAPPDATA",str(Path.home())))/"MejoraIA"/"Resultados"
 BASE.mkdir(parents=True,exist_ok=True)
@@ -98,7 +99,11 @@ class Handler(BaseHTTPRequestHandler):
     v=JOBS.get(jid)
     data={k:x for k,x in v.items() if k not in ("proc","cancel")} if v else None
    return self.send(200,data) if data is not None else self.send(404,{"error":"No existe"})
-  if self.path=="/status":return self.send(200,{"ia":ENGINE.is_file() and MODELS.is_dir(),"destino":str(BASE)})
+  if self.path=="/status":return self.send(200,{"ia":ENGINE.is_file() and MODELS.is_dir(),"destino":str(BASE),"version":updater.VERSION})
+  if self.path=="/update/check":
+   try:return self.send(200,updater.check())
+   except Exception as e:return self.send(200,{"available":False,"message":"No se pudo buscar la actualización: "+str(e)})
+
   if self.path.startswith("/partial/"):
    name=self.path.split("/")[-1].split("?")[0]
    p=BASE/name
@@ -120,6 +125,16 @@ class Handler(BaseHTTPRequestHandler):
   return self.send(404,{"error":"No encontrado"})
  def do_POST(self):
   try:
+   if self.path=="/update/install":
+    with LOCK:
+     if any(v["state"]=="running" for v in JOBS.values()):raise ValueError("Esperá a que termine el procesamiento antes de actualizar")
+    info=updater.check()
+    if not info.get("available"):raise ValueError(info.get("message","No hay versión nueva"))
+    if not getattr(sys,"frozen",False):raise ValueError("La actualización requiere el EXE compilado")
+    updater.install(info,sys.executable)
+    self.send(200,{"ok":True,"message":"Actualización descargada. Reiniciando..."})
+    threading.Timer(1.5,lambda:os._exit(0)).start()
+    return
    if self.path.startswith("/cancel/"):
     jid=self.path.rsplit("/",1)[-1]
     with LOCK:
