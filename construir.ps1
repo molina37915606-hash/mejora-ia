@@ -13,7 +13,7 @@ if (Test-Path engine){Remove-Item engine -Recurse -Force}
 New-Item engine -ItemType Directory | Out-Null
 Copy-Item (Join-Path $exe.Directory.FullName '*') engine -Recurse -Force
 if (-not (Test-Path engine/models)){throw "El paquete no contiene modelos de IA"}
-py -m py_compile server.py updater.py
+py -m py_compile server.py updater.py disk_output.py
 if ($LASTEXITCODE -ne 0){throw "Error de sintaxis en el código Python"}
 py generar_icono.py
 if ($LASTEXITCODE -ne 0){throw "No se pudo crear el icono"}
