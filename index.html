@@ -9,8 +9,8 @@
 .compare .handle{position:absolute;top:50%;left:50%;border-radius:100%;width:42px;height:42px;display:grid;place-items:center;background:white;color:#111;transform:translate(-50%,-50%);pointer-events:none;font-weight:800;box-shadow:0 3px 15px #0009}
 .compare .tag{position:absolute;top:12px;padding:6px 10px;background:#000b;border-radius:8px;font-size:13px;pointer-events:none}.tag.left{left:12px}.tag.right{right:12px}
 .compare input[type=range]{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:ew-resize;margin:0;z-index:3}
-#viewer[hidden],#work[hidden],#cancel[hidden],#partialbox[hidden]{display:none}#download[hidden]{display:none}#compare{max-height:70vh}#compare>img{max-height:70vh;object-fit:contain}
-</style><main><h1>MEJORA IA</h1><p>Ampliación local gratuita. Tus imágenes no se envían a internet.</p>
+#viewer[hidden],#work[hidden],#cancel[hidden],#partialbox[hidden],#installUpdate[hidden]{display:none}#download[hidden]{display:none}#compare{max-height:70vh}#compare>img{max-height:70vh;object-fit:contain}
+</style><main><h1>MEJORA IA <small>v5.0</small></h1><section id="updates"><strong>Actualizaciones</strong><p id="updateInfo">Buscando actualizaciones...</p><button id="checkUpdate" type="button" style="max-width:250px">Buscar actualización</button><button id="installUpdate" type="button" hidden style="max-width:250px;background:#26947a;margin-left:8px">Instalar y reiniciar</button></section><p>Ampliación local gratuita. Tus imágenes no se envían a internet.</p>
 <section><label>Cargar imagen JPG, PNG o WEBP</label><input id="file" type="file" accept="image/*">
 <div class="cols"><div><label>Ampliación</label><select id="scale"><option>2</option><option selected>4</option><option>8</option><option>16</option><option>32</option></select></div><div><label>Procesamiento</label><select id="mode"><option value="fiel">Fiel: conservar formas y colores</option><option value="ia">IA: reconstrucción de detalles</option></select></div></div>
 <label>Modelo de IA</label><select id="model"><option value="foto">Fotografía</option><option value="ilustracion">Ilustración / dibujo</option></select>
@@ -58,4 +58,21 @@ $('go').onclick=async()=>{
  }catch(e){$('message').textContent='No se completó: '+e.message}
  finally{clearInterval(clock);job=null;lock(false)}
 };
+
+async function checkUpdates(){
+ $('updateInfo').textContent='Consultando GitHub...';
+ try{
+ const r=await fetch('/update/check');const d=await r.json();if(!r.ok)throw Error(d.error);
+ $('installUpdate').hidden=!d.available;
+ $('updateInfo').textContent=d.available?'Versión '+d.latest+' disponible. Cambios: '+(d.notes||'Sin notas'):(d.message||'No hay actualizaciones públicas disponibles.');
+ }catch(e){$('updateInfo').textContent='No se pudo verificar: '+e.message}
+}
+$('checkUpdate').onclick=checkUpdates;
+$('installUpdate').onclick=async()=>{
+ if(job){$('updateInfo').textContent='Terminá o cancelá la ampliación antes de actualizar.';return}
+ $('installUpdate').disabled=true;$('updateInfo').textContent='Descargando actualización. No cierres el programa...';
+ try{const r=await fetch('/update/install',{method:'POST'});const d=await r.json();if(!r.ok)throw Error(d.error);$('updateInfo').textContent='Instalación preparada. Reiniciando...'}
+ catch(e){$('updateInfo').textContent=e.message;$('installUpdate').disabled=false}
+};
+checkUpdates();
 </script></html>
