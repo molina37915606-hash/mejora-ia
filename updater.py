@@ -1,6 +1,6 @@
 """Actualizador para releases públicos de GitHub. No almacena credenciales."""
 import os, sys, json, urllib.request, urllib.error, hashlib, tempfile, pathlib, subprocess, shutil, time
-VERSION="5.0.0"
+VERSION="5.1.0"
 REPO="molina37915606-hash/mejora-ia"
 API=f"https://api.github.com/repos/{REPO}/releases/latest"
 ASSET="MejoraIA.exe"
