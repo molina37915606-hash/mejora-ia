@@ -1,4 +1,4 @@
-import io, os, sys, uuid, tempfile, subprocess, threading, json, time, math, shutil
+import io, os, sys, uuid, tempfile, subprocess, threading, json, time, math, shutil, zipfile, re
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from PIL import Image, ImageOps, ImageFilter, ImageEnhance
@@ -12,6 +12,7 @@ WORK=Path(tempfile.mkdtemp(prefix="zompix_"))
 HISTORY_DIR=Path(os.environ.get("LOCALAPPDATA",str(Path.home())))/"Zompix"/"Historial"
 HISTORY_DIR.mkdir(parents=True,exist_ok=True)
 HISTORY_FILE=HISTORY_DIR/"trabajos.json"
+LIBRARY_DIR=HISTORY_DIR.parent/"Biblioteca"
 def get_history():
  try:return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))[:150]
  except (OSError,ValueError):return []
@@ -165,6 +166,14 @@ class Handler(BaseHTTPRequestHandler):
  def do_GET(self):
   if self.path=="/":return self.reply(200,(ROOT/"index.html").read_bytes(),"text/html; charset=utf-8")
   if self.path=="/brand.svg":return self.reply(200,(ROOT/"brand.svg").read_bytes(),"image/svg+xml")
+  if self.path=="/library":
+   manifest=LIBRARY_DIR/"manifest.json"
+   return self.reply(200,{"items":json.loads(manifest.read_text(encoding="utf-8")).get("items",[]) if manifest.exists() else []})
+  if self.path.startswith("/library/file/"):
+   parts=self.path.split("/")
+   if len(parts)!=5 or not re.fullmatch(r"[a-z]+",parts[3]) or parts[4] not in ("thumb.jpg","low.jpg","medium.jpg","original.jpg"):return self.reply(404,{"error":"Ruta inválida"})
+   source=LIBRARY_DIR/parts[3]/parts[4]
+   return self.reply(200,source.read_bytes(),"image/jpeg") if source.is_file() else self.reply(404,{"error":"No disponible"})
   if self.path=="/history":return self.reply(200,{"items":get_history()})
   if self.path.startswith("/history/thumb/"):
    key=self.path.rsplit("/",1)[-1]
@@ -202,6 +211,38 @@ class Handler(BaseHTTPRequestHandler):
   return self.reply(404,{"error":"No encontrado"})
  def do_POST(self):
   try:
+   if self.path=="/library/import":
+    with LOCK:
+     if any(v["state"]=="running" for v in JOBS.values()):raise ValueError("Terminá el trabajo antes de importar la biblioteca")
+    length=int(self.headers.get("Content-Length",0))
+    if not 0<length<30000000:raise ValueError("El paquete de biblioteca debe ser menor de 30 MB")
+    raw=self.rfile.read(length)
+    with zipfile.ZipFile(io.BytesIO(raw)) as pack:
+     manifest=json.loads(pack.read("manifest.json").decode("utf-8"))
+     items=manifest.get("items",[])
+     if len(items)!=10:raise ValueError("Paquete de biblioteca incorrecto")
+     for item in items:
+      ident=item.get("id","")
+      if not re.fullmatch(r"[a-z]+",ident):raise ValueError("Identificador inválido")
+      for level in ("thumb","low","medium","original"):
+       filename=f"{ident}/{level}.jpg"
+       member=pack.getinfo(filename)
+       if member.file_size>5000000:raise ValueError("Imagen de prueba demasiado grande")
+     stage=LIBRARY_DIR.parent/("biblioteca_preparando_"+uuid.uuid4().hex[:8])
+     stage.mkdir(parents=True)
+     try:
+      for item in items:
+       ident=item["id"]
+       (stage/ident).mkdir()
+       for level in ("thumb","low","medium","original"):
+        filename=f"{ident}/{level}.jpg"
+        (stage/filename).write_bytes(pack.read(filename))
+      (stage/"manifest.json").write_text(json.dumps(manifest,ensure_ascii=False),encoding="utf-8")
+      if LIBRARY_DIR.exists():shutil.rmtree(LIBRARY_DIR)
+      stage.rename(LIBRARY_DIR)
+     finally:
+      if stage.exists():shutil.rmtree(stage,ignore_errors=True)
+    return self.reply(200,{"ok":True,"count":10})
    if self.path.startswith("/history/delete/"):
     key=self.path.rsplit("/",1)[-1]
     with LOCK:
