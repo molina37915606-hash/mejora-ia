@@ -318,6 +318,25 @@ if __name__=="__main__":
  server_thread.start()
  url="http://127.0.0.1:"+str(http.server_port)+"/"
  class WindowAPI:
+  def save_image(self,job_id):
+   if not isinstance(job_id,str) or not re.fullmatch(r"[a-f0-9]{32}",job_id):return {"saved":False,"error":"Trabajo inválido"}
+   with LOCK:
+    item=JOBS.get(job_id)
+    if not item or item.get("state")!="done":return {"saved":False,"error":"La imagen todavía no está lista"}
+   source=WORK/(job_id+"_full.png")
+   if not source.is_file():return {"saved":False,"error":"El archivo temporal ya no existe"}
+   try:
+    choices=window.create_file_dialog(webview.SAVE_DIALOG,save_filename="Zompix_"+job_id[:8]+".png",file_types=("PNG (*.png)",))
+    if not choices:return {"saved":False,"cancelled":True}
+    dest=Path(choices[0] if isinstance(choices,(list,tuple)) else choices)
+    if dest.suffix.lower()!=".png":dest=dest.with_suffix(".png")
+    if dest.exists():
+     import ctypes
+     confirm=ctypes.windll.user32.MessageBoxW(None,"¿Reemplazar el archivo existente?","ZOMPIX",0x24)
+     if confirm!=6:return {"saved":False,"cancelled":True}
+    shutil.copyfile(source,dest)
+    return {"saved":True,"path":str(dest)}
+   except Exception as error:return {"saved":False,"error":str(error)}
   def ask_close(self):
    with LOCK:
     busy=any(v["state"]=="running" for v in JOBS.values())
