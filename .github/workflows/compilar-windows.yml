@@ -31,15 +31,15 @@ jobs:
           name: Zompix-Setup-Windows
           path: dist/Zompix-Setup.exe
           if-no-files-found: error
-      - name: Publicar v1.2.0
+      - name: Publicar v1.3.0
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v1.2.0 *> $null
+          gh release view v1.3.0 *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create v1.2.0 "./dist/Zompix-Setup.exe" --title "ZOMPIX v1.2.0" --notes "Progreso grande bloqueante, historial separado, diagnóstico de memoria y actividad IA." --target "${{ github.sha }}"
-            if ($LASTEXITCODE -ne 0) {throw "No se pudo publicar v1.2.0"}
+            gh release create v1.3.0 "./dist/Zompix-Setup.exe" --title "ZOMPIX v1.3.0" --notes "Ventana Windows independiente, procesado IA por lotes y perfiles de rendimiento." --target "${{ github.sha }}"
+            if ($LASTEXITCODE -ne 0) {throw "No se pudo publicar v1.3.0"}
           }
-          gh release edit v1.2.0 --latest
+          gh release edit v1.3.0 --latest
           if ($LASTEXITCODE -ne 0) {throw "No se pudo definir v1 como última versión"}
