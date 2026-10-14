@@ -3,6 +3,7 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from PIL import Image, ImageOps, ImageFilter, ImageEnhance
 import updater
+from disk_output import DiskImage
 ROOT=Path(getattr(sys,"_MEIPASS",Path(__file__).resolve().parent))
 ENGINE=ROOT/"engine"/"realesrgan-ncnn-vulkan.exe"
 MODELS=ROOT/"engine"/"models"
@@ -48,7 +49,7 @@ def run_job(j,raw,scale,mode,model,intensity,priority,settings):
   expected=target[0]*target[1]*len(im.getbands())
   free=shutil.disk_usage(WORK).free
   if expected*2>free:raise RuntimeError("No alcanza el espacio temporal disponible")
-  if expected>950000000:raise RuntimeError("Imagen demasiado grande para la RAM disponible; elegí una escala menor")
+  if max(target)>100000:raise RuntimeError("Lado final supera los 100.000 píxeles admitidos")
   upd(j,stage="Verificando recursos",diagnostic={"free_gb":round(free/1e9,1),"output_mb":round(expected/1e6)})
   # Fiel prioriza forma y color. IA sólo pasa una vez por x4.
   use_ai=(mode=="ia")
@@ -58,7 +59,7 @@ def run_job(j,raw,scale,mode,model,intensity,priority,settings):
   cols=math.ceil(width/tile);rows=math.ceil(height/tile)
   total=cols*rows
   upd(j,tiles_total=total,tiles_done=0,size=list(target),stage="Preparando bloques",pct=2)
-  out=Image.new(im.mode,target)
+  out=DiskImage(WORK/(j+"_pixels.tmp"),target[0],target[1],len(im.getbands()))
   preview_factor=min(1,1000/max(target))
   preview_size=(max(1,round(target[0]*preview_factor)),max(1,round(target[1]*preview_factor)))
   overview=Image.new("RGB",preview_size,(22,27,41))
@@ -119,7 +120,7 @@ def run_job(j,raw,scale,mode,model,intensity,priority,settings):
      needed=((c-a)*scale,(d-b)*scale)
      if section.size!=needed:section=section.resize(needed,Image.Resampling.LANCZOS)
      section=section.crop(((x0-a)*scale,(y0-b)*scale,(x1-a)*scale,(y1-b)*scale))
-     out.paste(section,(x0*scale,y0*scale))
+     out.paste(section,x0*scale,y0*scale)
      box=(round(x0*scale*preview_factor),round(y0*scale*preview_factor),round(x1*scale*preview_factor),round(y1*scale*preview_factor))
      if box[2]>box[0] and box[3]>box[1]:
       overview.paste(section.convert("RGB").resize((box[2]-box[0],box[3]-box[1]),Image.Resampling.BILINEAR),box[:2])
@@ -138,7 +139,7 @@ def run_job(j,raw,scale,mode,model,intensity,priority,settings):
    active(j)
    upd(j,stage="Preparando exportación temporal",pct=95,last_activity=time.time())
    result_path=WORK/(j+"_full.png")
-   out.save(result_path,format="PNG")
+   out.save(result_path)
    active(j)
    overview.save(WORK/(j+"_preview.png"))
   upd(j,state="done",stage="Lista para exportar",pct=100,preview="/preview/"+j,revision=total+1,size=list(target),eta=0)
@@ -147,6 +148,7 @@ def run_job(j,raw,scale,mode,model,intensity,priority,settings):
  except Exception as e:
   upd(j,state="error",stage="Error",error=str(e))
  finally:
+  if "out" in locals():out.close()
   upd(j,proc=None)
   record(j,settings)
   if JOBS[j]["state"]!="done":
