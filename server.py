@@ -8,13 +8,35 @@ ENGINE=ROOT/"engine"/"realesrgan-ncnn-vulkan.exe"
 MODELS=ROOT/"engine"/"models"
 Image.MAX_IMAGE_PIXELS=None
 WORK=Path(tempfile.mkdtemp(prefix="zompix_"))
+HISTORY_DIR=Path(os.environ.get("LOCALAPPDATA",str(Path.home())))/"Zompix"/"Historial"
+HISTORY_DIR.mkdir(parents=True,exist_ok=True)
+HISTORY_FILE=HISTORY_DIR/"trabajos.json"
+def get_history():
+ try:return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))[:150]
+ except (OSError,ValueError):return []
+def save_history(rows):
+ tmp=HISTORY_FILE.with_suffix(".tmp")
+ tmp.write_text(json.dumps(rows[:150],ensure_ascii=False),encoding="utf-8")
+ os.replace(tmp,HISTORY_FILE)
+def record(j,settings):
+ try:
+  with LOCK:
+   item=JOBS[j]
+   row={"id":j,"date":time.strftime("%Y-%m-%d %H:%M"),"state":item["state"],"size":item.get("size"),"settings":settings,"name":settings.get("name","Imagen")}
+   img=WORK/(j+"_preview.png")
+   if img.exists():
+    with Image.open(img) as thumb:
+     thumb.thumbnail((220,160))
+     thumb.convert("RGB").save(HISTORY_DIR/(j+".jpg"),quality=75,optimize=True)
+   rows=get_history();rows.insert(0,row);save_history(rows)
+ except Exception:pass
 JOBS={}
 LOCK=threading.RLock()
 def upd(j,**fields):
  with LOCK:JOBS[j].update(fields)
 def active(j):
  if JOBS[j]["cancel"]:raise InterruptedError("Proceso cancelado")
-def run_job(j,raw,scale,mode,model,intensity,priority):
+def run_job(j,raw,scale,mode,model,intensity,priority,settings):
  try:
   upd(j,stage="Leyendo imagen",pct=1,log=["Imagen cargada"])
   with Image.open(io.BytesIO(raw)) as incoming:
@@ -36,10 +58,12 @@ def run_job(j,raw,scale,mode,model,intensity,priority):
   overview=Image.new("RGB",preview_size,(22,27,41))
   modelname="realesrgan-x4plus" if model=="foto" else "realesrgan-x4plus-anime"
   began=time.monotonic()
+  durations=[]
   with tempfile.TemporaryDirectory(prefix="zompix_tiles_") as scratch:
    for y in range(rows):
     for x in range(cols):
      active(j)
+     block_began=time.monotonic()
      index=y*cols+x+1
      x0=x*tile;y0=y*tile;x1=min(width,x0+tile);y1=min(height,y0+tile)
      margin=12 if use_ai else 0
@@ -81,10 +105,11 @@ def run_job(j,raw,scale,mode,model,intensity,priority):
       overview.save(temporary,format="PNG")
       os.replace(temporary,destination)
       upd(j,preview="/preview/"+j,revision=index)
+     durations.append(time.monotonic()-block_began)
      elapsed=time.monotonic()-began
      recent=(JOBS[j].get("log") or [])[-9:]
      event=f"Bloque {index}/{total} completado"
-     upd(j,stage=event,pct=round(2+92*index/total,1),tiles_done=index,eta=round(elapsed/index*(total-index)),last_activity=time.time(),log=recent+[event])
+     upd(j,stage=event,pct=round(2+92*index/total,1),tiles_done=index,eta=round((sum(durations[-5:])/len(durations[-5:]))*(total-index)),last_activity=time.time(),log=recent+[event])
    active(j)
    upd(j,stage="Preparando exportación temporal",pct=95,last_activity=time.time())
    result_path=WORK/(j+"_full.png")
@@ -98,6 +123,7 @@ def run_job(j,raw,scale,mode,model,intensity,priority):
   upd(j,state="error",stage="Error",error=str(e))
  finally:
   upd(j,proc=None)
+  record(j,settings)
   if JOBS[j]["state"]!="done":
    for suffix in ("_full.png","_preview.png","_preview.tmp"):
     (WORK/(j+suffix)).unlink(missing_ok=True)
@@ -108,6 +134,12 @@ class Handler(BaseHTTPRequestHandler):
  def do_GET(self):
   if self.path=="/":return self.reply(200,(ROOT/"index.html").read_bytes(),"text/html; charset=utf-8")
   if self.path=="/brand.svg":return self.reply(200,(ROOT/"brand.svg").read_bytes(),"image/svg+xml")
+  if self.path=="/history":return self.reply(200,{"items":get_history()})
+  if self.path.startswith("/history/thumb/"):
+   key=self.path.rsplit("/",1)[-1]
+   if not any(x["id"]==key for x in get_history()):return self.reply(404,{"error":"No existe"})
+   p=HISTORY_DIR/(key+".jpg")
+   return self.reply(200,p.read_bytes(),"image/jpeg") if p.is_file() else self.reply(404,{"error":"Sin vista previa"})
   if self.path=="/status":return self.reply(200,{"version":updater.VERSION,"ia":ENGINE.exists(),"name":"Zompix"})
   if self.path=="/update/check":
    try:return self.reply(200,updater.check())
@@ -137,6 +169,16 @@ class Handler(BaseHTTPRequestHandler):
   return self.reply(404,{"error":"No encontrado"})
  def do_POST(self):
   try:
+   if self.path.startswith("/history/delete/"):
+    key=self.path.rsplit("/",1)[-1]
+    with LOCK:
+     rows=get_history()
+     if key=="all":
+      ids=[r["id"] for r in rows];save_history([])
+     else:
+      ids=[key];save_history([r for r in rows if r["id"]!=key])
+     for ident in ids:(HISTORY_DIR/(ident+".jpg")).unlink(missing_ok=True)
+    return self.reply(200,{"ok":True})
    if self.path=="/update/install":
     with LOCK:
      if any(i["state"]=="running" for i in JOBS.values()):raise ValueError("Terminá el procesamiento antes de actualizar")
@@ -171,10 +213,11 @@ class Handler(BaseHTTPRequestHandler):
    intensity=self.headers.get("X-Intensity","normal")
    priority=self.headers.get("X-Priority","equilibrado")
    if scale not in (2,4,8,16,32) or mode not in ("fiel","ia") or model not in ("foto","ilustracion") or intensity not in ("suave","normal","fuerte") or priority not in ("detalles","equilibrado","suave"):raise ValueError("Opciones incorrectas")
+   settings={"scale":scale,"mode":mode,"model":model,"intensity":intensity,"priority":priority,"name":self.headers.get("X-Filename","Imagen")[:120],"kind":self.headers.get("X-Kind","poster"),"dpi":self.headers.get("X-Dpi","150"),"sample":self.headers.get("X-Sample","false")=="true"}
    raw=self.rfile.read(length)
    j=uuid.uuid4().hex
    with LOCK:JOBS[j]={"state":"running","pct":0,"stage":"Iniciando","cancel":False,"proc":None,"tiles_done":0,"tiles_total":0,"log":[],"last_activity":time.time()}
-   threading.Thread(target=run_job,args=(j,raw,scale,mode,model,intensity,priority),daemon=True).start()
+   threading.Thread(target=run_job,args=(j,raw,scale,mode,model,intensity,priority,settings),daemon=True).start()
    return self.reply(200,{"job":j})
   except Exception as e:return self.reply(400,{"error":str(e)})
  def log_message(self,*args):pass
