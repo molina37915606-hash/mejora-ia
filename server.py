@@ -81,7 +81,13 @@ def run_job(j,raw,scale,mode,model,intensity,priority,settings):
       cmd=[str(ENGINE),"-i",str(source),"-o",str(destination),"-n",modelname,"-m",str(MODELS),"-s","4","-t","32","-f","png"]
       proc=subprocess.Popen(cmd,cwd=str(ENGINE.parent),stdout=subprocess.PIPE,stderr=subprocess.PIPE,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
       upd(j,proc=proc)
-      stdout,stderr=proc.communicate()
+      while True:
+       try:
+        stdout,stderr=proc.communicate(timeout=8)
+        break
+       except subprocess.TimeoutExpired:
+        active(j)
+        upd(j,stage=f"IA activa: bloque {index}/{total}, {int(time.time()-JOBS[j]['block_started'])} s",last_activity=time.time())
       upd(j,proc=None)
       active(j)
       if proc.returncode!=0 or not destination.exists():
