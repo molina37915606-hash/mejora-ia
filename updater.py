@@ -29,7 +29,12 @@ def install(info,current):
   if target.stat().st_size!=info["bytes"]:raise ValueError("El tamaño descargado no coincide con el esperado")
   # El instalador actualiza el mismo directorio y acceso directo sin crear otra instalación.
   flags=getattr(subprocess,"CREATE_NO_WINDOW",0)|getattr(subprocess,"DETACHED_PROCESS",0)
-  subprocess.Popen([str(target),"/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/CLOSEAPPLICATIONS"],creationflags=flags,close_fds=True)
+  script=tempdir/"apply.ps1"
+  setup=str(target).replace("'","''")
+  application=str(expected).replace("'","''")
+  ps="$ErrorActionPreference='Stop'\nStart-Sleep -Seconds 3\n$p=Start-Process -FilePath '"+setup+"' -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS' -Wait -PassThru\nif($p.ExitCode -eq 0){Start-Process -FilePath '"+application+"'}\n"
+  script.write_text(ps,encoding="utf-8")
+  subprocess.Popen(["powershell.exe","-NoProfile","-ExecutionPolicy","Bypass","-File",str(script)],creationflags=flags,close_fds=True)
  except:
   shutil.rmtree(tempdir,ignore_errors=True)
   raise
