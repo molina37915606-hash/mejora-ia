@@ -1,6 +1,6 @@
 $ErrorActionPreference='Stop'
 Set-Location $PSScriptRoot
-py -m pip install --disable-pip-version-check pyinstaller pillow
+py -m pip install --disable-pip-version-check pyinstaller pillow pywebview
 if ($LASTEXITCODE -ne 0) {throw "No se pudieron instalar dependencias"}
 $uri="https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip"
 $zip=Join-Path $env:TEMP 'mejoraia_motor.zip'
