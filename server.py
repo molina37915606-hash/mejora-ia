@@ -1,4 +1,4 @@
-import io, os, sys, uuid, tempfile, subprocess, threading, webbrowser, json, time, math, shutil
+import io, os, sys, uuid, tempfile, subprocess, threading, json, time, math, shutil
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from PIL import Image, ImageOps, ImageFilter, ImageEnhance
@@ -236,7 +236,31 @@ class Handler(BaseHTTPRequestHandler):
  def log_message(self,*args):pass
 if __name__=="__main__":
  import atexit
+ import webview
  atexit.register(lambda:shutil.rmtree(WORK,ignore_errors=True))
  http=ThreadingHTTPServer(("127.0.0.1",0),Handler)
- threading.Timer(0.6,lambda:webbrowser.open("http://127.0.0.1:"+str(http.server_port)+"/")).start()
- http.serve_forever()
+ server_thread=threading.Thread(target=http.serve_forever,daemon=True)
+ server_thread.start()
+ url="http://127.0.0.1:"+str(http.server_port)+"/"
+ class WindowAPI:
+  def ask_close(self):
+   with LOCK:
+    busy=any(v["state"]=="running" for v in JOBS.values())
+   return busy
+ window=webview.create_window("ZOMPIX · Mejora de imágenes",url,width=1190,height=850,min_size=(850,620),background_color="#0c111e",js_api=WindowAPI())
+ def before_close():
+  with LOCK:
+   running=[v for v in JOBS.values() if v["state"]=="running"]
+  if running:
+   import ctypes
+   response=ctypes.windll.user32.MessageBoxW(None,"Hay una imagen procesándose. ¿Cancelar y cerrar ZOMPIX?","ZOMPIX",0x24)
+   if response!=6:return False
+   for item in running:
+    item["cancel"]=True
+    proc=item.get("proc")
+    if proc and proc.poll() is None:proc.kill()
+  http.shutdown()
+  return True
+ window.events.closing+=before_close
+ webview.start(debug=False)
+ http.shutdown()
