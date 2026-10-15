@@ -79,12 +79,4 @@ if src.exists():
   archive.extractall(DEST)
  print("Imágenes originales incluidas")
 else:
- for i,(ident,title,category,model) in enumerate(MANIFEST):
-  folder=DEST/ident;folder.mkdir(exist_ok=True)
-  original=make_image(i)
-  for name,pixels in [("original",1024),("medium",512),("low",256),("thumb",160)]:
-   im=original.copy()
-   im.thumbnail((pixels,pixels),Image.Resampling.LANCZOS)
-   im.save(folder/(name+".jpg"),quality=88,optimize=True)
- (DEST/"manifest.json").write_text(json.dumps({"version":1,"items":[{"id":i,"title":n,"category":c,"model":m} for i,n,c,m in MANIFEST]},ensure_ascii=False),encoding="utf-8")
- print("Biblioteca de referencia generada; reemplazable por biblioteca_original.zip")
+ raise SystemExit("FALTA biblioteca_original.zip: subí el ZIP real de las 10 imágenes al directorio principal del repositorio. No se generarán imágenes ficticias.")
