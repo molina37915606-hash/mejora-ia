@@ -13,6 +13,9 @@ HISTORY_DIR=Path(os.environ.get("LOCALAPPDATA",str(Path.home())))/"Zompix"/"Hist
 HISTORY_DIR.mkdir(parents=True,exist_ok=True)
 HISTORY_FILE=HISTORY_DIR/"trabajos.json"
 LIBRARY_DIR=HISTORY_DIR.parent/"Biblioteca"
+BUNDLED_LIBRARY=ROOT/"biblioteca_incluida"
+def selected_library():
+ return LIBRARY_DIR if (LIBRARY_DIR/"manifest.json").is_file() else BUNDLED_LIBRARY
 def get_history():
  try:return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))[:150]
  except (OSError,ValueError):return []
@@ -167,12 +170,12 @@ class Handler(BaseHTTPRequestHandler):
   if self.path=="/":return self.reply(200,(ROOT/"index.html").read_bytes(),"text/html; charset=utf-8")
   if self.path=="/brand.svg":return self.reply(200,(ROOT/"brand.svg").read_bytes(),"image/svg+xml")
   if self.path=="/library":
-   manifest=LIBRARY_DIR/"manifest.json"
+   manifest=selected_library()/"manifest.json"
    return self.reply(200,{"items":json.loads(manifest.read_text(encoding="utf-8")).get("items",[]) if manifest.exists() else []})
   if self.path.startswith("/library/file/"):
    parts=self.path.split("/")
    if len(parts)!=5 or not re.fullmatch(r"[a-z]+",parts[3]) or parts[4] not in ("thumb.jpg","low.jpg","medium.jpg","original.jpg"):return self.reply(404,{"error":"Ruta inválida"})
-   source=LIBRARY_DIR/parts[3]/parts[4]
+   source=selected_library()/parts[3]/parts[4]
    return self.reply(200,source.read_bytes(),"image/jpeg") if source.is_file() else self.reply(404,{"error":"No disponible"})
   if self.path=="/history":return self.reply(200,{"items":get_history()})
   if self.path.startswith("/history/thumb/"):
