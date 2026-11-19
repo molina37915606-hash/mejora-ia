@@ -21,7 +21,7 @@ class StorageTests(unittest.TestCase):
                 folder = storage_config.save_folder(external)
                 self.assertEqual(folder, external / "Zompix_Temporales")
                 session, warning = storage_config.create_session()
-                self.assertEqual(session.parent, folder)
+                self.assertEqual(session.parent.resolve(), folder.resolve())
                 self.assertFalse(warning)
                 status = storage_config.status(session)
                 self.assertGreater(status["free_gb"], 0)
