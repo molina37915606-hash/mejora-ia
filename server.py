@@ -2,13 +2,15 @@ import io, os, sys, uuid, tempfile, subprocess, threading, json, time, math, shu
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from PIL import Image, ImageOps, ImageFilter, ImageEnhance
+import gc
+import storage_config
 import updater
 from disk_output import DiskImage
 ROOT=Path(getattr(sys,"_MEIPASS",Path(__file__).resolve().parent))
 ENGINE=ROOT/"engine"/"realesrgan-ncnn-vulkan.exe"
 MODELS=ROOT/"engine"/"models"
 Image.MAX_IMAGE_PIXELS=None
-WORK=Path(tempfile.mkdtemp(prefix="zompix_"))
+WORK, STORAGE_WARNING = storage_config.create_session()
 HISTORY_DIR=Path(os.environ.get("LOCALAPPDATA",str(Path.home())))/"Zompix"/"Historial"
 HISTORY_DIR.mkdir(parents=True,exist_ok=True)
 HISTORY_FILE=HISTORY_DIR/"trabajos.json"
@@ -45,13 +47,23 @@ def upd(j,**fields):
  with LOCK:JOBS[j].update(fields)
 def active(j):
  if JOBS[j]["cancel"]:raise InterruptedError("Proceso cancelado")
-def run_job(j,raw,scale,mode,model,intensity,priority,settings):
+def run_job(j,source_path,scale,mode,model,intensity,priority,settings):
+ source=None
+ im=None
  try:
-  upd(j,stage="Leyendo imagen",pct=1,log=["Imagen cargada"])
-  with Image.open(io.BytesIO(raw)) as incoming:
-   im=ImageOps.exif_transpose(incoming)
-   im.load()
-  if im.mode not in ("RGB","RGBA"):im=im.convert("RGBA" if "A" in im.getbands() else "RGB")
+  upd(j,stage="Leyendo imagen desde disco",pct=1,log=["Imagen recibida en disco"])
+  source=Image.open(source_path)
+  if source.getexif().get(274,1) in (2,3,4,5,6,7,8):
+   im=ImageOps.exif_transpose(source)
+   source.close()
+   source=None
+  else:
+   im=source
+  im.load()
+  if im.mode not in ("RGB","RGBA"):
+   converted=im.convert("RGBA" if "A" in im.getbands() else "RGB")
+   im.close()
+   im=converted
   width,height=im.size
   target=(width*scale,height*scale)
   expected=target[0]*target[1]*len(im.getbands())
@@ -63,7 +75,7 @@ def run_job(j,raw,scale,mode,model,intensity,priority,settings):
   use_ai=(mode=="ia")
   if use_ai and not ENGINE.is_file():raise RuntimeError("Motor de IA no disponible")
   performance=settings.get('performance','auto')
-  tile=(160 if performance=='low' else 256 if performance=='fast' else 192) if use_ai else 256
+  tile=(128 if performance=='low' else 256 if performance=='fast' else 192) if use_ai else (128 if performance=='low' else 256)
   cols=math.ceil(width/tile);rows=math.ceil(height/tile)
   total=cols*rows
   upd(j,tiles_total=total,tiles_done=0,size=list(target),stage="Preparando bloques",pct=2)
@@ -74,10 +86,10 @@ def run_job(j,raw,scale,mode,model,intensity,priority,settings):
   modelname="realesrgan-x4plus" if model=="foto" else "realesrgan-x4plus-anime"
   began=time.monotonic()
   durations=[]
-  with tempfile.TemporaryDirectory(prefix="zompix_tiles_") as scratch:
+  with tempfile.TemporaryDirectory(prefix="zompix_tiles_",dir=WORK) as scratch:
    input_dir=Path(scratch)/"batch_in";output_dir=Path(scratch)/"batch_out"
    if use_ai:input_dir.mkdir();output_dir.mkdir()
-   batch_size=4 if performance=="low" else 12 if performance=="fast" else 8
+   batch_size=1 if performance=="low" else 12 if performance=="fast" else 8
    for y in range(rows):
     for x in range(cols):
      active(j)
@@ -102,6 +114,7 @@ def run_job(j,raw,scale,mode,model,intensity,priority,settings):
         cc=min(width,xx1+12);dd=min(height,yy1+12)
         im.crop((aa,bb,cc,dd)).save(input_dir/(f"{number:06d}.png"))
        cmd=[str(ENGINE),"-i",str(input_dir),"-o",str(output_dir),"-n",modelname,"-m",str(MODELS),"-s","4","-t","32","-f","png"]
+       if performance=="low":cmd+=["-j","1:1:1"]
        proc=subprocess.Popen(cmd,cwd=str(ENGINE.parent),stdout=subprocess.PIPE,stderr=subprocess.PIPE,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
        upd(j,proc=proc,stage=f"IA procesando lote {index}-{stop}/{total}",block_started=time.time())
        while True:
@@ -139,6 +152,8 @@ def run_job(j,raw,scale,mode,model,intensity,priority,settings):
       overview.save(temporary,format="PNG")
       os.replace(temporary,destination)
       upd(j,preview="/preview/"+j,revision=index)
+     del section
+     if index%10==0:gc.collect()
      durations.append(time.monotonic()-block_began)
      elapsed=time.monotonic()-began
      recent=(JOBS[j].get("log") or [])[-9:]
@@ -157,6 +172,10 @@ def run_job(j,raw,scale,mode,model,intensity,priority,settings):
   upd(j,state="error",stage="Error",error=str(e))
  finally:
   if "out" in locals():out.close()
+  if im is not None:im.close()
+  if source is not None and source is not im:source.close()
+  Path(source_path).unlink(missing_ok=True)
+  gc.collect()
   upd(j,proc=None)
   record(j,settings)
   if JOBS[j]["state"]!="done":
@@ -184,6 +203,7 @@ class Handler(BaseHTTPRequestHandler):
    p=HISTORY_DIR/(key+".jpg")
    return self.reply(200,p.read_bytes(),"image/jpeg") if p.is_file() else self.reply(404,{"error":"Sin vista previa"})
   if self.path=="/status":return self.reply(200,{"version":updater.VERSION,"ia":ENGINE.exists(),"name":"Zompix"})
+  if self.path=="/storage":return self.reply(200,storage_config.status(WORK,STORAGE_WARNING))
   if self.path=="/update/last":
    log=HISTORY_DIR.parent/"ultima_actualizacion.txt"
    return self.reply(200,{"message":log.read_text(encoding="utf-8-sig") if log.is_file() else ""})
@@ -302,14 +322,30 @@ class Handler(BaseHTTPRequestHandler):
    intensity=self.headers.get("X-Intensity","normal")
    priority=self.headers.get("X-Priority","equilibrado")
    if scale not in (2,4,8,16,32) or mode not in ("fiel","ia") or model not in ("foto","ilustracion") or intensity not in ("suave","normal","fuerte") or priority not in ("detalles","equilibrado","suave"):raise ValueError("Opciones incorrectas")
-   settings={"performance":self.headers.get("X-Performance","auto"),"scale":scale,"mode":mode,"model":model,"intensity":intensity,"priority":priority,"name":self.headers.get("X-Filename","Imagen")[:120],"kind":self.headers.get("X-Kind","poster"),"dpi":self.headers.get("X-Dpi","150"),"sample":self.headers.get("X-Sample","false")=="true"}
+   performance=self.headers.get("X-Performance","low")
+   if performance not in ("low","auto","fast"):raise ValueError("Modo de rendimiento incorrecto")
+   settings={"performance":performance,"scale":scale,"mode":mode,"model":model,"intensity":intensity,"priority":priority,"name":self.headers.get("X-Filename","Imagen")[:120],"kind":self.headers.get("X-Kind","poster"),"dpi":self.headers.get("X-Dpi","150"),"sample":self.headers.get("X-Sample","false")=="true"}
+   j=uuid.uuid4().hex
    with LOCK:
     if any(v["state"]=="running" for v in JOBS.values()):raise ValueError("Ya se está procesando otra imagen")
-   raw=self.rfile.read(length)
-   j=uuid.uuid4().hex
-   with LOCK:JOBS[j]={"state":"running","pct":0,"stage":"Iniciando","cancel":False,"proc":None,"tiles_done":0,"tiles_total":0,"log":[],"last_activity":time.time()}
-   threading.Thread(target=run_job,args=(j,raw,scale,mode,model,intensity,priority,settings),daemon=True).start()
-   return self.reply(200,{"job":j})
+    JOBS[j]={"state":"running","pct":0,"stage":"Recibiendo imagen en disco","cancel":False,"proc":None,"tiles_done":0,"tiles_total":0,"log":[],"last_activity":time.time()}
+   source_path=WORK/(j+"_source.upload")
+   try:
+    if length+256*1024*1024>shutil.disk_usage(WORK).free:
+     raise ValueError("No hay espacio libre suficiente en el disco de trabajo para recibir la imagen")
+    with source_path.open("wb") as destination:
+     remaining=length
+     while remaining:
+      part=self.rfile.read(min(1024*1024,remaining))
+      if not part:raise ValueError("La imagen llegó incompleta")
+      destination.write(part)
+      remaining-=len(part)
+    threading.Thread(target=run_job,args=(j,source_path,scale,mode,model,intensity,priority,settings),daemon=True).start()
+    return self.reply(200,{"job":j})
+   except Exception:
+    source_path.unlink(missing_ok=True)
+    with LOCK:JOBS.pop(j,None)
+    raise
   except Exception as e:return self.reply(400,{"error":str(e)})
  def log_message(self,*args):pass
 if __name__=="__main__":
@@ -321,6 +357,27 @@ if __name__=="__main__":
  server_thread.start()
  url="http://127.0.0.1:"+str(http.server_port)+"/"
  class WindowAPI:
+  def choose_work_folder(self):
+   global WORK, STORAGE_WARNING
+   with LOCK:
+    if any(i["state"]=="running" for i in JOBS.values()):
+     return {"saved":False,"error":"Esperá a terminar o cancelar el procesamiento."}
+   try:
+    choice=window.create_file_dialog(webview.FOLDER_DIALOG)
+    if not choice:return {"saved":False,"cancelled":True}
+    folder=choice[0] if isinstance(choice,(list,tuple)) else choice
+    storage_config.save_folder(folder)
+    with LOCK:
+     if JOBS:
+      return {"saved":True,"restart":True,"path":str(folder)}
+     next_work,warning=storage_config.create_session()
+     previous=WORK
+     WORK=next_work
+     STORAGE_WARNING=warning
+    shutil.rmtree(previous,ignore_errors=True)
+    return {"saved":True,"restart":False,"path":str(WORK.parent)}
+   except (OSError,ValueError) as error:
+    return {"saved":False,"error":str(error)}
   def save_image(self,job_id):
    if not isinstance(job_id,str) or not re.fullmatch(r"[a-f0-9]{32}",job_id):return {"saved":False,"error":"Trabajo inválido"}
    with LOCK:
