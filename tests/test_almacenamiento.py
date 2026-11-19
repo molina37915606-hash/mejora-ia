@@ -19,7 +19,7 @@ class StorageTests(unittest.TestCase):
             with patch.object(storage_config, "APP_DIR", root / "config"), \
                  patch.object(storage_config, "CONFIG_FILE", root / "config" / "config.json"):
                 folder = storage_config.save_folder(external)
-                self.assertEqual(folder, external / "Zompix_Temporales")
+                self.assertTrue(folder.samefile(external / "Zompix_Temporales"))
                 session, warning = storage_config.create_session()
                 self.assertTrue(session.parent.samefile(folder))
                 self.assertFalse(warning)
