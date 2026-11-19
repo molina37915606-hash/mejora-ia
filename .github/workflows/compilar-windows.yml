@@ -2,7 +2,7 @@ name: Compilar instalador Zompix Windows
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, zompix-disco-externo-4gb]
 permissions:
   contents: write
 jobs:
@@ -14,6 +14,11 @@ jobs:
         with:
           python-version: '3.12'
           architecture: 'x64'
+      - name: Probar uso de disco externo y PNG
+        shell: pwsh
+        run: |
+          py -m pip install --disable-pip-version-check pillow
+          py -m unittest discover -s tests -v
       - name: Compilar Zompix
         shell: pwsh
         run: ./construir.ps1
@@ -31,15 +36,16 @@ jobs:
           name: Zompix-Setup-Windows
           path: dist/Zompix-Setup.exe
           if-no-files-found: error
-      - name: Publicar v1.5.0
+      - name: Publicar v1.6.0
+        if: github.ref == 'refs/heads/main'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view v1.5.0 *> $null
+          gh release view v1.6.0 *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create v1.5.0 "./dist/Zompix-Setup.exe" --title "ZOMPIX v1.5.0" --notes "Pruebas rápidas por zona con cortina comparativa y biblioteca offline incorporada." --target "${{ github.sha }}"
-            if ($LASTEXITCODE -ne 0) {throw "No se pudo publicar v1.5.0"}
+            gh release create v1.6.0 "./dist/Zompix-Setup.exe" --title "ZOMPIX v1.6.0" --notes "Carpeta de trabajo configurable en disco externo, menor consumo de RAM con bloques y lotes reducidos, subida por streaming y pruebas automáticas." --target "${{ github.sha }}"
+            if ($LASTEXITCODE -ne 0) {throw "No se pudo publicar v1.6.0"}
           }
-          gh release edit v1.5.0 --latest
+          gh release edit v1.6.0 --latest
           if ($LASTEXITCODE -ne 0) {throw "No se pudo definir v1 como última versión"}
